@@ -1,4 +1,4 @@
-import { Role, Service, User, Appointment, DashboardStats, Product, Client, CommissionStats, Notification, Store } from '../types.ts';
+import { Role, Service, User, Appointment, DashboardStats, Product, Client, CommissionStats, Notification, Store, Expense } from '../types.ts';
 
 type StoreRegistrationData = {
   storeName: string;
@@ -34,7 +34,7 @@ type LoginData = {
 type NewAppointmentData = {
   client_id: number;
   professional_id: number;
-  service_id: number;
+  service_ids: number[];
   start_time: string;
   storeId: number;
 };
@@ -132,9 +132,73 @@ export const api = {
     });
     return res.json();
   },
+  async updateService(id: number, data: Omit<Service, 'id'>): Promise<void> {
+    const res = await fetch(`/api/services/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar serviço');
+    }
+  },
+  async deleteService(id: number): Promise<void> {
+    const res = await fetch(`/api/services/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao excluir serviço');
+    }
+  },
   async getStaff(storeId?: number): Promise<User[]> {
     const res = await fetch(`/api/staff?storeId=${storeId}`);
     return res.json();
+  },
+  async getStaffServiceCommissions(userId: number): Promise<Record<string, number>> {
+    const res = await fetch(`/api/staff/${userId}/service-commissions`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar comissões específicas');
+    }
+    return res.json();
+  },
+  async updateStaffServiceCommissions(userId: number, commissions: Record<string, number | string>): Promise<void> {
+    const res = await fetch(`/api/staff/${userId}/service-commissions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commissions }),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar comissões específicas');
+    }
+  },
+  async addStaff(data: Partial<User> & { password?: string }): Promise<{ id: number }> {
+    const res = await fetch('/api/staff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao adicionar profissional');
+    }
+    return res.json();
+  },
+  async updateStaff(id: number, data: Partial<User>): Promise<void> {
+    const res = await fetch(`/api/staff/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar profissional');
+    }
+  },
+  async deleteStaff(id: number): Promise<void> {
+    const res = await fetch(`/api/staff/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao excluir profissional');
+    }
   },
   async getClients(): Promise<Client[]> {
     const res = await fetch(`/api/clients`);
@@ -144,11 +208,18 @@ export const api = {
     const res = await fetch(`/api/clients/${id}/history`);
     return res.json();
   },
+  async getClientAppointments(clientId: number): Promise<Appointment[]> {
+    const res = await fetch(`/api/clients/${clientId}/appointments`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar agendamentos do cliente');
+    }
+    return res.json();
+  },
   async getAppointments(storeId?: number): Promise<Appointment[]> {
     const res = await fetch(`/api/appointments?storeId=${storeId}`);
     return res.json();
   },
-  async createAppointment(appointment: NewAppointmentData): Promise<{ id: number }> {
+  async createAppointment(appointment: NewAppointmentData): Promise<{ ids: number[] }> {
     const res = await fetch('/api/appointments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -170,8 +241,26 @@ export const api = {
     const res = await fetch(`/api/commissions/${userId}`);
     return res.json();
   },
-  async getDashboardStats(storeId?: number): Promise<DashboardStats> {
-    const res = await fetch(`/api/dashboard/stats?storeId=${storeId}`);
+  async getDashboardStats(storeId?: number, period: string = 'monthly', category: string = 'all'): Promise<DashboardStats> {
+    const res = await fetch(`/api/dashboard/stats?storeId=${storeId}&period=${period}&category=${category}`);
+    return res.json();
+  },
+  async getExpenses(storeId: number): Promise<Expense[]> {
+    const res = await fetch(`/api/expenses?storeId=${storeId}`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar despesas');
+    }
+    return res.json();
+  },
+  async addExpense(data: { description: string, amount: number, storeId: number }): Promise<{ id: number }> {
+    const res = await fetch('/api/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao adicionar despesa');
+    }
     return res.json();
   },
   async getProducts(storeId?: number): Promise<Product[]> {
@@ -201,6 +290,16 @@ export const api = {
   async getSettings(storeId?: number): Promise<Record<string, string>> {
     const res = await fetch(`/api/settings?storeId=${storeId}`);
     return res.json();
+  },
+  async updateSettings(storeId: number, settings: Record<string, string>): Promise<void> {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storeId, settings }),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar configurações');
+    }
   },
   async getNotifications(userId: number, storeId: number): Promise<Notification[]> {
     const res = await fetch(`/api/notifications?userId=${userId}&storeId=${storeId}`);

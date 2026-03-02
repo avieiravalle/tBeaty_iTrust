@@ -28,7 +28,7 @@ interface CardProps {
   className?: string;
 }
 
-export const Card = ({ children, className = "" }: CardProps) => (
+export const Card: React.FC<CardProps> = ({ children, className = "" }) => (
   <div className={`bg-white border border-zinc-100 rounded-2xl shadow-sm p-6 ${className}`}>
     {children}
   </div>

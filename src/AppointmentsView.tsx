@@ -64,11 +64,11 @@ export const AppointmentsView = ({ role, userId, storeId }: AppointmentsViewProp
     e.preventDefault();
     try {
       await api.createAppointment({
-        ...newAppt,
         client_id: parseInt(newAppt.client_id, 10),
         professional_id: parseInt(newAppt.professional_id, 10),
-        service_id: parseInt(newAppt.service_id, 10),
-        storeId
+        service_ids: [parseInt(newAppt.service_id, 10)],
+        start_time: newAppt.start_time,
+        storeId,
       });
       setIsModalOpen(false);
       setNewAppt({ client_id: '', professional_id: '', service_id: '', start_time: '' });

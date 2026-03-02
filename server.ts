@@ -32,7 +32,7 @@ function verifyPassword(storedHash: string, suppliedPassword: string): boolean {
 const db = new Database("salon.db");
 
 // --- Database Schema Migration ---
-const LATEST_SCHEMA_VERSION = 2; // Increment this number with each schema change
+const LATEST_SCHEMA_VERSION = 5; // Increment this number with each schema change
 
 const currentVersion = db.pragma('user_version', { simple: true }) as number;
 
@@ -41,6 +41,8 @@ if (currentVersion < LATEST_SCHEMA_VERSION) {
   // For development, the simplest migration is to drop tables and recreate them.
   // In production, you would use a more sophisticated migration strategy.
   db.exec(`
+    DROP TABLE IF EXISTS expenses;
+    DROP TABLE IF EXISTS service_commissions;
     DROP TABLE IF EXISTS notifications;
     DROP TABLE IF EXISTS settings;
     DROP TABLE IF EXISTS products;
@@ -76,6 +78,7 @@ db.exec(`
     name TEXT NOT NULL,
     price REAL NOT NULL,
     duration_minutes INTEGER NOT NULL,
+    category TEXT,
     store_id INTEGER,
     FOREIGN KEY (store_id) REFERENCES stores(id)
   );
@@ -120,6 +123,24 @@ db.exec(`
     FOREIGN KEY (store_id) REFERENCES stores(id)
   );
 
+  CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    description TEXT NOT NULL,
+    amount REAL NOT NULL,
+    date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    store_id INTEGER,
+    FOREIGN KEY (store_id) REFERENCES stores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS service_commissions (
+    user_id INTEGER NOT NULL,
+    service_id INTEGER NOT NULL,
+    commission_rate REAL NOT NULL,
+    PRIMARY KEY (user_id, service_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -151,9 +172,10 @@ if (storeCount.count === 0) {
   db.prepare("INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, ?, ?, ?)").run("Cabeleireiro João", "john@glow.com", hashPassword("john123"), "COLLABORATOR", 30, storeId);
   db.prepare("INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, ?, ?, ?)").run("Manicure Maria", "maria@glow.com", hashPassword("maria123"), "COLLABORATOR", 35, storeId);
 
-  db.prepare("INSERT INTO services (name, price, duration_minutes, store_id) VALUES (?, ?, ?, ?)").run("Corte de Cabelo", 50, 45, storeId);
-  db.prepare("INSERT INTO services (name, price, duration_minutes, store_id) VALUES (?, ?, ?, ?)").run("Coloração", 120, 120, storeId);
-  db.prepare("INSERT INTO services (name, price, duration_minutes, store_id) VALUES (?, ?, ?, ?)").run("Manicure", 30, 30, storeId);
+  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Corte de Cabelo", 50, 45, "Cabelo", storeId);
+  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Coloração", 120, 120, "Cabelo", storeId);
+  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Manicure", 30, 30, "Unha", storeId);
+  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Limpeza de Pele", 80, 60, "Estética", storeId);
 
   db.prepare("INSERT INTO clients (name, phone, cep, password) VALUES (?, ?, ?, ?)").run("Ana Souza", "11999999999", "01001000", hashPassword("ana123"));
   db.prepare("INSERT INTO clients (name, phone, cep, password) VALUES (?, ?, ?, ?)").run("Carlos Lima", "11888888888", "04538133", hashPassword("carlos123"));
@@ -162,6 +184,7 @@ if (storeCount.count === 0) {
   db.prepare("INSERT INTO products (name, stock_quantity, price, store_id) VALUES (?, ?, ?, ?)").run("Tinta Vermelha", 5, 15, storeId);
 
   db.prepare("INSERT INTO settings (key, value, store_id) VALUES (?, ?, ?)").run("salon_name", "tBeauty", storeId);
+  db.prepare("INSERT INTO settings (key, value, store_id) VALUES (?, ?, ?)").run("monthly_goal", "10000", storeId);
 }
 
 async function startServer() {
@@ -292,25 +315,187 @@ async function startServer() {
 
   // API Routes
   app.get("/api/services", (req, res) => {
-    const storeId = req.query.storeId;
+    const storeId = req.query.storeId as string;
     const services = db.prepare("SELECT * FROM services WHERE store_id = ?").all(storeId);
     res.json(services);
   });
 
   app.post("/api/services", (req, res) => {
-    const { name, price, duration_minutes, storeId } = req.body;
-    const result = db.prepare("INSERT INTO services (name, price, duration_minutes, store_id) VALUES (?, ?, ?, ?)").run(name, price, duration_minutes, storeId);
+    const { name, price, duration_minutes, category, storeId } = req.body;
+    const result = db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run(name, price, duration_minutes, category, storeId);
     res.json({ id: result.lastInsertRowid });
   });
 
+  app.patch("/api/services/:id", (req, res) => {
+    const { id } = req.params;
+    const { name, price, duration_minutes, category } = req.body;
+
+    if (!name || price === undefined || duration_minutes === undefined) {
+      return res.status(400).json({ error: "Todos os campos são obrigatórios." });
+    }
+
+    try {
+      const result = db.prepare(`
+        UPDATE services 
+        SET name = ?, price = ?, duration_minutes = ?, category = ?
+        WHERE id = ?
+      `).run(name, price, duration_minutes, category, id);
+
+      if (result.changes === 0) {
+        return res.status(404).json({ error: "Serviço não encontrado." });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Erro ao atualizar o serviço." });
+    }
+  });
+
+  app.delete("/api/services/:id", (req, res) => {
+    const { id } = req.params;
+
+    try {
+      // Check if the service is part of any non-cancelled appointments
+      const appointmentCount = db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM appointments 
+        WHERE service_id = ? AND status != 'CANCELLED'
+      `).get(id) as { count: number };
+
+      if (appointmentCount.count > 0) {
+        return res.status(400).json({ error: "Não é possível excluir o serviço, pois ele está associado a agendamentos existentes." });
+      }
+
+      const result = db.prepare("DELETE FROM services WHERE id = ?").run(id);
+
+      if (result.changes === 0) {
+        return res.status(404).json({ error: "Serviço não encontrado." });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Erro ao excluir o serviço." });
+    }
+  });
+
   app.get("/api/staff", (req, res) => {
-    const storeId = req.query.storeId;
+    const storeId = req.query.storeId as string;
     const staff = db.prepare("SELECT * FROM users WHERE role = 'COLLABORATOR' AND store_id = ?").all(storeId);
     res.json(staff);
   });
 
+  app.get("/api/staff/:userId/service-commissions", (req, res) => {
+    const { userId } = req.params;
+    const commissions = db.prepare("SELECT service_id, commission_rate FROM service_commissions WHERE user_id = ?").all(userId);
+    const commissionMap = commissions.reduce((acc: any, curr: any) => {
+        acc[curr.service_id] = curr.commission_rate;
+        return acc;
+    }, {});
+    res.json(commissionMap);
+  });
+
+  app.post("/api/staff/:userId/service-commissions", (req, res) => {
+      const { userId } = req.params;
+      const { commissions } = req.body; // commissions is an object: { serviceId: rate, ... }
+
+      if (!commissions) {
+          return res.status(400).json({ error: "Commissions data is required." });
+      }
+
+      const insertStmt = db.prepare(`
+          INSERT INTO service_commissions (user_id, service_id, commission_rate) 
+          VALUES (?, ?, ?)
+          ON CONFLICT(user_id, service_id) DO UPDATE SET commission_rate = excluded.commission_rate
+      `);
+      const deleteStmt = db.prepare("DELETE FROM service_commissions WHERE user_id = ? AND service_id = ?");
+
+      const transaction = db.transaction(() => {
+          for (const serviceId in commissions) {
+              const rate = commissions[serviceId];
+              // If rate is a valid number, insert/update it.
+              // If rate is null/undefined/empty string, it means we should remove the specific commission.
+              if (rate !== null && rate !== '' && !isNaN(parseFloat(rate))) {
+                  insertStmt.run(userId, serviceId, parseFloat(rate));
+              } else {
+                  deleteStmt.run(userId, serviceId);
+              }
+          }
+      });
+
+      try {
+          transaction();
+          res.json({ success: true });
+      } catch (error) {
+          console.error("Error updating service commissions:", error);
+          res.status(500).json({ error: "Failed to update service commissions." });
+      }
+  });
+
+  app.post("/api/staff", (req, res) => {
+    const { name, email, password, commission_rate, store_id } = req.body;
+    if (!name || !email || !password || commission_rate === undefined || !store_id) {
+      return res.status(400).json({ error: "Todos os campos são obrigatórios." });
+    }
+    try {
+      const hashedPassword = hashPassword(password);
+      const result = db.prepare(
+        "INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, 'COLLABORATOR', ?, ?)"
+      ).run(name, email, hashedPassword, commission_rate, store_id);
+      res.status(201).json({ id: result.lastInsertRowid });
+    } catch (error: any) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return res.status(400).json({ error: "Este e-mail já está em uso." });
+      }
+      res.status(500).json({ error: "Erro ao adicionar profissional." });
+    }
+  });
+
+  app.patch("/api/staff/:id", (req, res) => {
+    const { id } = req.params;
+    const { name, email, commission_rate } = req.body;
+    // Password change is not handled here for simplicity.
+    if (!name || !email || commission_rate === undefined) {
+      return res.status(400).json({ error: "Nome, email e taxa de comissão são obrigatórios." });
+    }
+    try {
+      const result = db.prepare(
+        "UPDATE users SET name = ?, email = ?, commission_rate = ? WHERE id = ? AND role = 'COLLABORATOR'"
+      ).run(name, email, commission_rate, id);
+
+      if (result.changes === 0) {
+        return res.status(404).json({ error: "Profissional não encontrado ou não é um colaborador." });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return res.status(400).json({ error: "Este e-mail já está em uso por outro usuário." });
+      }
+      res.status(500).json({ error: "Erro ao atualizar profissional." });
+    }
+  });
+
+  app.delete("/api/staff/:id", (req, res) => {
+    const { id } = req.params;
+    try {
+      // Optional: Check if collaborator has future appointments before deleting
+      const appointmentCount = db.prepare(
+        "SELECT COUNT(*) as count FROM appointments WHERE professional_id = ? AND status = 'PENDING' AND start_time > CURRENT_TIMESTAMP"
+      ).get(id) as { count: number };
+
+      if (appointmentCount.count > 0) {
+        return res.status(400).json({ error: "Não é possível excluir. O profissional tem agendamentos futuros." });
+      }
+
+      const result = db.prepare("DELETE FROM users WHERE id = ? AND role = 'COLLABORATOR'").run(id);
+      if (result.changes === 0) {
+        return res.status(404).json({ error: "Profissional não encontrado." });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Erro ao excluir profissional." });
+    }
+  });
+
   app.get("/api/appointments", (req, res) => {
-    const storeId = req.query.storeId;
+    const storeId = req.query.storeId as string;
     const appointments = db.prepare(`
       SELECT a.*, u.name as professional_name, s.name as service_name, s.price as service_price, c.name as client_name
       FROM appointments a
@@ -323,37 +508,66 @@ async function startServer() {
   });
 
   app.post("/api/appointments", (req, res) => {
-    const { client_id, professional_id, service_id, start_time, storeId } = req.body;
-    
-    // Get service duration
-    const service = db.prepare("SELECT duration_minutes FROM services WHERE id = ?").get(service_id) as { duration_minutes: number };
-    const start = new Date(start_time);
-    const end = new Date(start.getTime() + service.duration_minutes * 60000);
-    const end_time = end.toISOString();
+    const { client_id, professional_id, service_ids, start_time, storeId } = req.body;
 
-    // Overlap check
-    const overlap = db.prepare(`
-      SELECT COUNT(*) as count FROM appointments 
-      WHERE professional_id = ? 
-      AND status != 'CANCELLED'
-      AND store_id = ?
-      AND (
-        (start_time < ? AND end_time > ?) OR
-        (start_time < ? AND end_time > ?) OR
-        (start_time >= ? AND end_time <= ?)
-      )
-    `).get(professional_id, storeId, end_time, start_time, end_time, start_time, start_time, end_time) as { count: number };
-
-    if (overlap.count > 0) {
-      return res.status(400).json({ error: "O profissional já possui um agendamento neste horário." });
+    if (!service_ids || !Array.isArray(service_ids) || service_ids.length === 0) {
+      return res.status(400).json({ error: "Pelo menos um serviço deve ser selecionado." });
     }
 
-    const result = db.prepare(`
-      INSERT INTO appointments (client_id, professional_id, service_id, start_time, end_time, store_id) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(client_id, professional_id, service_id, start_time, end_time, storeId);
-    
-    res.json({ id: result.lastInsertRowid });
+    const transaction = db.transaction(() => {
+      let currentStartTime = new Date(start_time);
+      const createdAppointmentIds: number[] = [];
+
+      const placeholders = service_ids.map(() => '?').join(',');
+      const services = db.prepare(`SELECT id, duration_minutes FROM services WHERE id IN (${placeholders})`).all(...service_ids) as { id: number, duration_minutes: number }[];
+      const serviceMap = new Map(services.map(s => [s.id, s]));
+
+      const totalDuration = service_ids.reduce((total, id) => {
+        const service = serviceMap.get(id);
+        return total + (service ? service.duration_minutes : 0);
+      }, 0);
+
+      const finalEndTime = new Date(currentStartTime.getTime() + totalDuration * 60000);
+
+      // Correct overlap check for a time range
+      const overlap = db.prepare(`
+        SELECT COUNT(*) as count FROM appointments 
+        WHERE professional_id = ? 
+        AND status != 'CANCELLED'
+        AND store_id = ?
+        AND (start_time < ? AND end_time > ?)
+      `).get(professional_id, storeId, finalEndTime.toISOString(), currentStartTime.toISOString()) as { count: number };
+
+      if (overlap.count > 0) {
+        throw new Error("O profissional já possui um agendamento neste horário.");
+      }
+
+      for (const service_id of service_ids) {
+        const service = serviceMap.get(service_id);
+        if (!service) continue;
+
+        const end_time = new Date(currentStartTime.getTime() + service.duration_minutes * 60000);
+
+        const result = db.prepare(`
+          INSERT INTO appointments (client_id, professional_id, service_id, start_time, end_time, store_id) 
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(client_id, professional_id, service_id, currentStartTime.toISOString(), end_time.toISOString(), storeId);
+        
+        createdAppointmentIds.push(result.lastInsertRowid as number);
+        currentStartTime = end_time;
+      }
+
+      return createdAppointmentIds;
+    });
+
+    try {
+      const ids = transaction();
+      res.json({ ids });
+    } catch (error: any) {
+      if (error.message.includes("O profissional já possui")) return res.status(400).json({ error: error.message });
+      console.error("Appointment creation error:", error);
+      res.status(500).json({ error: "Erro ao criar agendamentos." });
+    }
   });
 
   app.patch("/api/appointments/:id/status", (req, res) => {
@@ -364,20 +578,92 @@ async function startServer() {
   });
 
   app.get("/api/dashboard/stats", (req, res) => {
-    const storeId = req.query.storeId;
-    const revenue = db.prepare("SELECT SUM(s.price) as total FROM appointments a JOIN services s ON a.service_id = s.id WHERE a.status = 'COMPLETED' AND a.store_id = ?").get(storeId) as { total: number };
-    const appointmentCount = db.prepare("SELECT COUNT(*) as count FROM appointments WHERE store_id = ?").get(storeId) as { count: number };
+    const storeId = req.query.storeId as string | undefined;
+    const period = (req.query.period as string) || 'monthly';
+    const category = req.query.category as string | undefined;
+
+    const now = new Date();
+    let startDate = new Date(now.getFullYear(), 0, 1).toISOString(); // Default to start of year
+
+    if (period === 'daily') {
+      startDate = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+    } else if (period === 'weekly') {
+      const startOfWeek = new Date();
+      const day = startOfWeek.getDay();
+      const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+      startOfWeek.setDate(diff);
+      startOfWeek.setHours(0, 0, 0, 0);
+      startDate = startOfWeek.toISOString();
+    } else if (period === 'monthly') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    }
+
+    const params: (string | number | undefined)[] = [storeId, startDate];
+    let whereClauses = ["a.store_id = ?", "a.start_time >= ?"];
+
+    if (category && category !== 'all') {
+      whereClauses.push("s.category = ?");
+      params.push(category);
+    }
+
+    const completedWhere = [...whereClauses, "a.status = 'COMPLETED'"].join(" AND ");
+    const allStatusWhere = whereClauses.join(" AND ");
+
+    const revenue = db.prepare(`SELECT SUM(s.price) as total FROM appointments a JOIN services s ON a.service_id = s.id WHERE ${completedWhere}`).get(...params) as { total: number };
+    const appointmentCount = db.prepare(`SELECT COUNT(a.id) as count FROM appointments a JOIN services s ON a.service_id = s.id WHERE ${allStatusWhere}`).get(...params) as { count: number };
+    const totalCommissions = db.prepare(`
+      SELECT SUM(s.price * COALESCE(sc.commission_rate, u.commission_rate) / 100) as total
+      FROM appointments a JOIN services s ON a.service_id = s.id JOIN users u ON a.professional_id = u.id
+      LEFT JOIN service_commissions sc ON sc.user_id = a.professional_id AND sc.service_id = a.service_id
+      WHERE ${completedWhere}
+    `).get(...params) as { total: number };
+
     const lowStock = db.prepare("SELECT COUNT(*) as count FROM products WHERE stock_quantity < 10 AND store_id = ?").get(storeId) as { count: number };
-    
+    const stockCost = db.prepare("SELECT SUM(price * stock_quantity) as total FROM products WHERE store_id = ?").get(storeId) as { total: number };
+    const extraCosts = db.prepare("SELECT SUM(amount) as total FROM expenses WHERE store_id = ? AND date >= ?").get(storeId, startDate) as { total: number };
+    const monthlyGoalSetting = db.prepare("SELECT value FROM settings WHERE key = 'monthly_goal' AND store_id = ?").get(storeId) as { value: string };
+
     res.json({
       revenue: revenue.total || 0,
-      appointments: appointmentCount.count,
-      lowStock: lowStock.count
+      netProfit: (revenue.total || 0) - ((totalCommissions.total || 0) + (extraCosts.total || 0)),
+      totalCommissions: totalCommissions.total || 0,
+      appointments: appointmentCount.count || 0,
+      lowStock: lowStock?.count || 0,
+      stockCost: stockCost.total || 0,
+      extraCosts: extraCosts.total || 0,
+      monthlyGoal: parseFloat(monthlyGoalSetting?.value) || 0,
     });
   });
 
+  app.get("/api/expenses", (req, res) => {
+    const storeId = req.query.storeId as string;
+    const expenses = db.prepare("SELECT * FROM expenses WHERE store_id = ? ORDER BY date DESC").all(storeId);
+    res.json(expenses);
+  });
+
+  app.post("/api/expenses", (req, res) => {
+      const { description, amount, storeId } = req.body;
+      if (!description || amount === undefined || !storeId) {
+          return res.status(400).json({ error: "Descrição, valor (que pode ser zero) e ID da loja são obrigatórios." });
+      }
+      try {
+        // Explicitly check if the store_id exists to provide a better error message
+        const storeExists = db.prepare("SELECT id FROM stores WHERE id = ?").get(storeId);
+        if (!storeExists) {
+          // This error is likely due to a stale session after a database reset.
+          // Instructing the user to re-login is the correct course of action.
+          return res.status(400).json({ error: "A loja associada não foi encontrada. Por favor, saia e entre novamente no sistema." });
+        }
+        const result = db.prepare("INSERT INTO expenses (description, amount, store_id) VALUES (?, ?, ?)").run(description, amount, storeId);
+        res.status(201).json({ id: result.lastInsertRowid });
+      } catch (error) {
+        console.error("Error adding expense:", error);
+        res.status(500).json({ error: "Erro interno ao adicionar despesa." });
+      }
+  });
+
   app.get("/api/products", (req, res) => {
-    const storeId = req.query.storeId;
+    const storeId = req.query.storeId as string;
     const products = db.prepare("SELECT * FROM products WHERE store_id = ?").all(storeId);
     res.json(products);
   });
@@ -420,6 +706,25 @@ async function startServer() {
     res.json(history);
   });
 
+  app.get("/api/clients/:clientId/appointments", (req, res) => {
+    const { clientId } = req.params;
+    const appointments = db.prepare(`
+      SELECT 
+        a.*, 
+        u.name as professional_name, 
+        s.name as service_name, 
+        st.name as store_name,
+        s.price as service_price
+      FROM appointments a
+      JOIN users u ON a.professional_id = u.id
+      JOIN services s ON a.service_id = s.id
+      JOIN stores st ON a.store_id = st.id
+      WHERE a.client_id = ?
+      ORDER BY a.start_time DESC
+    `).all(clientId);
+    res.json(appointments);
+  });
+
   app.get("/api/commissions/:userId", (req, res) => {
     const { userId } = req.params;
     const user = db.prepare("SELECT commission_rate, store_id FROM users WHERE id = ?").get(userId) as { commission_rate: number, store_id: number };
@@ -438,11 +743,13 @@ async function startServer() {
 
     const calculateCommission = (startDate: string) => {
       const result = db.prepare(`
-        SELECT SUM(s.price * ? / 100) as total
+        SELECT SUM(s.price * COALESCE(sc.commission_rate, u.commission_rate) / 100) as total
         FROM appointments a
         JOIN services s ON a.service_id = s.id
+        JOIN users u ON a.professional_id = u.id
+        LEFT JOIN service_commissions sc ON sc.user_id = a.professional_id AND sc.service_id = a.service_id
         WHERE a.professional_id = ? AND a.status = 'COMPLETED' AND a.start_time >= ? AND a.store_id = ?
-      `).get(user.commission_rate, userId, startDate, user.store_id) as { total: number };
+      `).get(userId, startDate, user.store_id) as { total: number };
       return result.total || 0;
     };
 
@@ -455,13 +762,49 @@ async function startServer() {
   });
 
   app.get("/api/settings", (req, res) => {
-    const storeId = req.query.storeId;
+    const storeId = req.query.storeId as string;
     const settings = db.prepare("SELECT * FROM settings WHERE store_id = ?").all(storeId);
     const settingsMap = settings.reduce((acc: any, curr: any) => {
       acc[curr.key] = curr.value;
       return acc;
     }, {});
     res.json(settingsMap);
+  });
+
+  app.post("/api/settings", (req, res) => {
+    const { storeId, settings } = req.body;
+    if (!storeId || !settings) {
+        return res.status(400).json({ error: "storeId and settings are required." });
+    }
+
+    try {
+        const storeExists = db.prepare("SELECT id FROM stores WHERE id = ?").get(storeId);
+        if (!storeExists) {
+          // This error is likely due to a stale session after a database reset.
+          // Instructing the user to re-login is the correct course of action.
+          return res.status(400).json({ error: "A loja associada não foi encontrada. Por favor, saia e entre novamente no sistema." });
+        }
+
+        const stmt = db.prepare(`
+            INSERT INTO settings (key, value, store_id) 
+            VALUES (?, ?, ?)
+            ON CONFLICT(key, store_id) DO UPDATE SET value = excluded.value
+        `);
+
+        const transaction = db.transaction(() => {
+            for (const key in settings) {
+                if (Object.prototype.hasOwnProperty.call(settings, key)) {
+                    stmt.run(key, settings[key], storeId);
+                }
+            }
+        });
+
+        transaction();
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error updating settings:", error);
+        res.status(500).json({ error: "Erro ao atualizar as configurações." });
+    }
   });
 
   // Vite middleware for development
@@ -479,7 +822,8 @@ async function startServer() {
   }
 
   app.get("/api/notifications", (req, res) => {
-    const { userId, storeId } = req.query;
+    const userId = req.query.userId as string;
+    const storeId = req.query.storeId as string;
     const notifications = db.prepare(`
       SELECT * FROM notifications 
       WHERE (user_id = ? OR user_id IS NULL) AND store_id = ? 
@@ -496,7 +840,8 @@ async function startServer() {
   });
 
   app.delete("/api/notifications/clear", (req, res) => {
-    const { userId, storeId } = req.query;
+    const userId = req.query.userId as string;
+    const storeId = req.query.storeId as string;
     db.prepare("DELETE FROM notifications WHERE user_id = ? AND store_id = ?").run(userId, storeId);
     res.json({ success: true });
   });
@@ -516,7 +861,7 @@ async function startServer() {
       JOIN clients c ON a.client_id = c.id
       JOIN users u ON a.professional_id = u.id
       JOIN services s ON a.service_id = s.id
-      WHERE a.status = 'SCHEDULED' 
+      WHERE a.status = 'PENDING' 
       AND a.start_time BETWEEN ? AND ?
     `).all(now.toISOString(), oneHourFromNow.toISOString());
 

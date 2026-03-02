@@ -1,39 +1,51 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Scissors } from 'lucide-react';
-import { ClientIllustration } from './Illustrations.tsx';
+import { User, Briefcase } from 'lucide-react';
 
-export const LandingView = ({ onSelectSalon, onSelectClient }: { onSelectSalon: () => void, onSelectClient: () => void }) => {
+interface LandingViewProps {
+  onClientClick: () => void;
+  onClientRegisterClick: () => void;
+  onAdminClick: () => void;
+  onAdminRegisterClick: () => void;
+}
+
+export const LandingView = ({ onClientClick, onClientRegisterClick, onAdminClick, onAdminRegisterClick }: LandingViewProps) => {
   return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-4 text-center">
+    <div className="min-h-screen bg-zinc-900 text-white flex flex-col items-center justify-center p-4">
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="mb-12"
+        className="text-center"
       >
-        <div className="w-16 h-16 bg-black rounded-2xl flex items-center justify-center text-white mx-auto mb-4 shadow-lg">
-          <Scissors size={32} />
-        </div>
-        <h1 className="text-3xl font-bold tracking-tight text-zinc-900">tBeauty</h1>
-        <p className="text-zinc-500 mt-2">Como você quer acessar o sistema?</p>
+        <h1 className="text-5xl font-bold tracking-tighter">tBeauty</h1>
+        <p className="text-zinc-400 mt-2">Seu salão, simplificado.</p>
       </motion.div>
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.2 }}
-        className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl"
+        className="mt-16 flex flex-col md:flex-row gap-4 w-full max-w-md"
       >
-        <button onClick={onSelectClient} className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-lg shadow-zinc-200/50 hover:shadow-xl hover:border-zinc-300 transition-all text-zinc-500 hover:text-black focus:ring-2 focus:ring-black outline-none">
-          <ClientIllustration />
-          <span className="text-lg font-bold">Sou Cliente</span>
-        </button>
-        
-        <button onClick={onSelectSalon} className="bg-white p-8 rounded-3xl border border-zinc-200 shadow-lg shadow-zinc-200/50 hover:shadow-xl hover:border-zinc-300 transition-all text-zinc-500 hover:text-black focus:ring-2 focus:ring-black outline-none">
-          <Scissors size={120} className="mx-auto mb-4 p-5" strokeWidth={1.5} />
-          <span className="text-lg font-bold">Sou Salão</span>
-        </button>
+        <div className="flex-1 flex flex-col gap-3">
+          <button onClick={onClientClick} className="w-full flex flex-col items-center justify-center gap-3 p-8 bg-zinc-800 rounded-2xl hover:bg-zinc-700 transition-colors">
+            <User size={32} />
+            <span className="font-bold text-lg">Sou Cliente</span>
+          </button>
+          <button onClick={onClientRegisterClick} className="text-zinc-400 text-sm hover:text-white transition-colors text-center">
+            Não tem conta? <span className="underline">Cadastre-se</span>
+          </button>
+        </div>
+        <div className="flex-1 flex flex-col gap-3">
+          <button onClick={onAdminClick} className="w-full flex flex-col items-center justify-center gap-3 p-8 bg-zinc-800 rounded-2xl hover:bg-zinc-700 transition-colors">
+            <Briefcase size={32} />
+            <span className="font-bold text-lg">Sou Gestor</span>
+          </button>
+          <button onClick={onAdminRegisterClick} className="text-zinc-400 text-sm hover:text-white transition-colors text-center">
+            Não tem conta? <span className="underline">Cadastre-se</span>
+          </button>
+        </div>
       </motion.div>
     </div>
   );

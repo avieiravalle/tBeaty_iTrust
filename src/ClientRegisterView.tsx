@@ -1,15 +1,16 @@
 import React, { useState, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { User, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { User, ArrowLeft, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { api } from './services/api.ts';
 import { phoneMask, cepMask } from './masks.ts';
 
 interface ClientRegisterViewProps {
   onBack: () => void;
-  onRegisterSuccess: () => void;
+  onRegisterSuccess: () => void; // Will navigate to login
+  onNavigateToLogin: () => void;
 }
 
-export const ClientRegisterView = ({ onBack, onRegisterSuccess }: ClientRegisterViewProps) => {
+export const ClientRegisterView = ({ onBack, onRegisterSuccess, onNavigateToLogin }: ClientRegisterViewProps) => {
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -18,6 +19,8 @@ export const ClientRegisterView = ({ onBack, onRegisterSuccess }: ClientRegister
     confirmPassword: '',
   });
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,16 +87,31 @@ export const ClientRegisterView = ({ onBack, onRegisterSuccess }: ClientRegister
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 mb-1">Senha</label>
-            <input required type="password" placeholder="••••••••" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+            <div className="relative">
+              <input required type={showPassword ? 'text' : 'password'} placeholder="••••••••" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all pr-10" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-black">
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 mb-1">Confirmar Senha</label>
-            <input required type="password" placeholder="••••••••" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all" value={formData.confirmPassword} onChange={e => setFormData({ ...formData, confirmPassword: e.target.value })} />
+            <div className="relative">
+              <input required type={showConfirmPassword ? 'text' : 'password'} placeholder="••••••••" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all pr-10" value={formData.confirmPassword} onChange={e => setFormData({ ...formData, confirmPassword: e.target.value })} />
+              <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-black">
+                {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
           </div>
 
           <button type="submit" className="w-full bg-black text-white py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-black/10 mt-4">
             Cadastrar
           </button>
+
+          <p className="text-center text-sm text-zinc-500 pt-4">
+            Já tem uma conta?{' '}
+            <button type="button" onClick={onNavigateToLogin} className="font-bold text-black hover:underline">Faça Login</button>
+          </p>
         </form>
       </motion.div>
     </div>

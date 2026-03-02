@@ -15,6 +15,7 @@ export interface Service {
   name: string;
   price: number;
   duration_minutes: number;
+  category?: string;
 }
 
 export interface Appointment {
@@ -26,6 +27,8 @@ export interface Appointment {
   service_id: number;
   service_name?: string;
   service_price?: number;
+  store_id: number;
+  store_name?: string;
   start_time: string;
   end_time: string;
   status: 'PENDING' | 'COMPLETED' | 'CANCELLED';
@@ -51,6 +54,13 @@ export interface CommissionStats {
   rate: number;
 }
 
+export interface Expense {
+  id: number;
+  description: string;
+  amount: number;
+  date: string;
+}
+
 export interface Product {
   id: number;
   name: string;
@@ -60,8 +70,13 @@ export interface Product {
 
 export interface DashboardStats {
   revenue: number;
+  netProfit: number;
+  totalCommissions: number;
+  extraCosts: number;
+  stockCost: number; // Total inventory value
   appointments: number;
   lowStock: number;
+  monthlyGoal: number;
 }
 
 export interface Notification {

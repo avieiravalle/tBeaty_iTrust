@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { Scissors, CheckCircle2, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Scissors, CheckCircle2, ChevronRight, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { api } from './services/api.ts';
 import { User } from './types.ts';
 
 interface AuthViewProps {
   onLogin: (user: User) => void;
+  initialRegister?: boolean;
 }
 
-export const AuthView = ({ onLogin }: AuthViewProps) => {
-  const [isLogin, setIsLogin] = useState(true);
+export const AuthView = ({ onLogin, initialRegister = false }: AuthViewProps) => {
+  const [isLogin, setIsLogin] = useState(!initialRegister);
   const [role, setRole] = useState<'MANAGER' | 'COLLABORATOR'>('MANAGER');
   const [formData, setFormData] = useState({
     email: '',
@@ -20,6 +21,7 @@ export const AuthView = ({ onLogin }: AuthViewProps) => {
   });
   const [error, setError] = useState('');
   const [successCode, setSuccessCode] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (!isLogin) {
@@ -167,7 +169,12 @@ export const AuthView = ({ onLogin }: AuthViewProps) => {
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 mb-1">Senha</label>
-            <input required type="password" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+            <div className="relative">
+              <input required type={showPassword ? 'text' : 'password'} className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none transition-all pr-10" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-black">
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
           </div>
           <button type="submit" className="w-full bg-black text-white py-3 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-black/10 mt-4">{isLogin ? 'Entrar' : 'Registrar'}</button>
         </form>
