@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, LogOut, Calendar } from 'lucide-react';
-import { AuthView } from './AuthView';
 import { Client } from './types';
 import { ClientAppointmentsView } from './ClientAppointmentsView';
+import { ClientAuthView } from './ClientAuthView';
 
 const ClientDashboard = ({ client, onLogout }: { client: Client, onLogout: () => void }) => {
   // Por enquanto, o painel mostra apenas a visão de agendamentos.
@@ -75,8 +75,6 @@ export const ClientView = ({ onBack, initialRegister = false }: { onBack: () => 
   };
 
   if (!client) {
-    // NOTA: Assumindo que AuthView pode ser adaptado para o login do cliente.
-    // Ele deve aceitar uma prop onClientLogin e chamá-la com o objeto do Cliente.
     return (
       <div className="relative">
         <button 
@@ -86,7 +84,7 @@ export const ClientView = ({ onBack, initialRegister = false }: { onBack: () => 
         >
           <ArrowLeft size={20} />
         </button>
-        <AuthView onClientLogin={handleLogin} initialRegister={initialRegister} />
+        <ClientAuthView onLogin={handleLogin} initialRegister={initialRegister} />
       </div>
     );
   }

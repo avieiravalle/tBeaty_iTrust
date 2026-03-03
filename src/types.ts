@@ -34,6 +34,8 @@ export interface Appointment {
   start_time: string;
   end_time: string;
   status: 'PENDING' | 'COMPLETED' | 'CANCELLED';
+  review_id?: number | null;
+  review_rating?: number | null;
 }
 
 export interface Store {
@@ -45,6 +47,7 @@ export interface Store {
 export interface Client {
   id: number;
   name: string;
+  email: string;
   phone: string;
   cep: string;
   birth_date?: string | null;

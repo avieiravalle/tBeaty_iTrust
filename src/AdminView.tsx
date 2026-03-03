@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, LogOut, LayoutDashboard, Calendar, Scissors, Package, DollarSign, Users, Settings, Heart, Radar } from 'lucide-react';
+import { ArrowLeft, LogOut, LayoutDashboard, Calendar, Scissors, Package, DollarSign, Users, Settings, Heart, Radar, HelpCircle } from 'lucide-react';
 import { AuthView } from './AuthView';
 import { User } from './types';
 import { SidebarItem } from './UI';
@@ -12,6 +12,7 @@ import { StaffView } from './StaffView';
 import { SettingsView } from './SettingsView';
 import { CommissionsView } from './CommissionsView';
 import { ClientsView } from './ClientsView';
+import { HelpView } from './HelpView';
 import { OpportunitiesView } from './OpportunitiesView.tsx';
 import { NotificationCenter } from './NotificationCenter';
 
@@ -27,7 +28,8 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
     { id: 'staff', label: 'Profissionais', icon: Users },
     { id: 'clients', label: 'Clientes', icon: Heart },
     { id: 'opportunities', label: 'Oportunidades', icon: Radar },
-    { id: 'settings', label: 'Configurações', icon: Settings }
+    { id: 'settings', label: 'Configurações', icon: Settings },
+    { id: 'help', label: 'Ajuda / Manual', icon: HelpCircle }
   ];
 
   const collaboratorViews = [
@@ -64,6 +66,8 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
         return <ClientsView storeId={user.store_id} />;
       case 'commissions':
         return <CommissionsView userId={user.id} />;
+      case 'help':
+        return <HelpView />;
       case 'opportunities':
         return <OpportunitiesView storeId={user.store_id} initialTab={opportunityType || 'inactive'} />;
       default:

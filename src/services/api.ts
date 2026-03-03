@@ -41,6 +41,7 @@ type NewAppointmentData = {
 
 type ClientRegistrationData = {
   name: string;
+  email: string;
   phone: string;
   cep: string;
   birth_date?: string;
@@ -56,6 +57,13 @@ type ClientLoginData = {
 type WhatsappMessageData = {
   to: string; // Formato E.164
   message: string;
+};
+
+type NewReviewData = {
+  appointment_id: number;
+  rating: number;
+  comment?: string;
+  client_id: number; // For authorization check on backend
 };
 
 type ApiError = {
@@ -253,6 +261,17 @@ export const api = {
     const res = await fetch(`/api/clients/${clientId}/appointments`);
     if (!res.ok) {
       await handleApiError(res, 'Falha ao buscar agendamentos do cliente');
+    }
+    return res.json();
+  },
+  async addReview(data: NewReviewData): Promise<{ id: number }> {
+    const res = await fetch('/api/reviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao enviar avaliação');
     }
     return res.json();
   },

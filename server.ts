@@ -122,7 +122,7 @@ function verifyPassword(storedHash: string, suppliedPassword: string): boolean {
 const db = new Database("salon.db");
 
 // --- Database Schema Migration ---
-const LATEST_SCHEMA_VERSION = 8; // Increment this number with each schema change
+const LATEST_SCHEMA_VERSION = 10; // Increment this number with each schema change
 
 const currentVersion = db.pragma('user_version', { simple: true }) as number;
 
@@ -131,6 +131,7 @@ if (currentVersion < LATEST_SCHEMA_VERSION) {
   // For development, the simplest migration is to drop tables and recreate them.
   // In production, you would use a more sophisticated migration strategy.
   db.exec(`
+    DROP TABLE IF EXISTS reviews;
     DROP TABLE IF EXISTS client_stores;
     DROP TABLE IF EXISTS expenses;
     DROP TABLE IF EXISTS service_commissions;
@@ -182,6 +183,7 @@ db.exec(`
     phone TEXT UNIQUE NOT NULL,
     cep TEXT NOT NULL,
     password TEXT NOT NULL,
+    email TEXT UNIQUE,
     birth_date DATE
   );
 
@@ -190,6 +192,21 @@ db.exec(`
     store_id INTEGER NOT NULL,
     PRIMARY KEY (client_id, store_id),
     FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+    FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    appointment_id INTEGER NOT NULL UNIQUE,
+    client_id INTEGER NOT NULL,
+    professional_id INTEGER NOT NULL,
+    store_id INTEGER NOT NULL,
+    rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+    comment TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+    FOREIGN KEY (professional_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
   );
 
@@ -279,8 +296,8 @@ if (storeCount.count === 0) {
   db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Manicure", 30, 30, "Unha", storeId);
   db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Limpeza de Pele", 80, 60, "Estética", storeId);
 
-  db.prepare("INSERT INTO clients (name, phone, cep, password) VALUES (?, ?, ?, ?)").run("Ana Souza", "11999999999", "01001000", hashPassword("ana123"));
-  db.prepare("INSERT INTO clients (name, phone, cep, password) VALUES (?, ?, ?, ?)").run("Carlos Lima", "11888888888", "04538133", hashPassword("carlos123"));
+  db.prepare("INSERT INTO clients (name, email, phone, cep, password) VALUES (?, ?, ?, ?, ?)").run("Ana Souza", "ana@example.com", "11999999999", "01001000", hashPassword("ana123"));
+  db.prepare("INSERT INTO clients (name, email, phone, cep, password) VALUES (?, ?, ?, ?, ?)").run("Carlos Lima", "carlos@example.com", "11888888888", "04538133", hashPassword("carlos123"));
 
   db.prepare("INSERT INTO products (name, stock_quantity, price, store_id) VALUES (?, ?, ?, ?)").run("Shampoo Pro", 15, 25, storeId);
   db.prepare("INSERT INTO products (name, stock_quantity, price, store_id) VALUES (?, ?, ?, ?)").run("Tinta Vermelha", 5, 15, storeId);
@@ -379,9 +396,9 @@ async function startServer() {
   });
 
   app.post("/api/auth/register-client", (req, res) => {
-    const { name, phone, cep, password, storeId, birth_date } = req.body;
-    if (!name || !phone || !cep) {
-      return res.status(400).json({ error: "Nome, telefone e CEP são obrigatórios." });
+    const { name, email, phone, cep, password, storeId, birth_date } = req.body;
+    if (!name || !email || !phone || !cep) {
+      return res.status(400).json({ error: "Nome, email, telefone e CEP são obrigatórios." });
     }
     if (!storeId) {
         return res.status(400).json({ error: "A loja (storeId) é obrigatória para associar o cliente." });
@@ -397,19 +414,19 @@ async function startServer() {
         // If password is not provided (e.g., manager registering a client), generate a random one.
         const finalPassword = password || randomBytes(16).toString('hex');
         const hashedPassword = hashPassword(finalPassword);
-        const result = db.prepare("INSERT INTO clients (name, phone, cep, password, birth_date) VALUES (?, ?, ?, ?, ?)")
-          .run(name, phone, cep, hashedPassword, birth_date || null);
+        const result = db.prepare("INSERT INTO clients (name, email, phone, cep, password, birth_date) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(name, email, phone, cep, hashedPassword, birth_date || null);
         const clientId = result.lastInsertRowid;
         // Associate client with the store
         db.prepare("INSERT INTO client_stores (client_id, store_id) VALUES (?, ?)")
           .run(clientId, storeId);
-        return { id: clientId, name, phone, cep };
+        return { id: clientId, name, email, phone, cep, birth_date };
       });
       const clientData = transaction();
       res.status(201).json(clientData);
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return res.status(400).json({ error: "Este número de telefone já está cadastrado." });
+        return res.status(400).json({ error: "Este e-mail ou telefone já está cadastrado." });
       }
       console.error("Client registration error:", error);
       const errorMessage = process.env.NODE_ENV !== 'production' ? error.message : 'Erro ao registrar cliente.';
@@ -1093,11 +1110,14 @@ async function startServer() {
         u.name as professional_name, 
         s.name as service_name, 
         st.name as store_name,
-        s.price as service_price
+        s.price as service_price,
+        r.id as review_id,
+        r.rating as review_rating
       FROM appointments a
       JOIN users u ON a.professional_id = u.id
       JOIN services s ON a.service_id = s.id
       JOIN stores st ON a.store_id = st.id
+      LEFT JOIN reviews r ON r.appointment_id = a.id
       WHERE a.client_id = ?
       ORDER BY a.start_time DESC
     `).all(clientId);
@@ -1221,6 +1241,51 @@ async function startServer() {
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Falha ao desconectar WhatsApp." });
+    }
+  });
+
+  app.post("/api/reviews", (req, res) => {
+    const { appointment_id, rating, comment, client_id } = req.body; // client_id for auth check
+
+    if (!appointment_id || !rating) {
+      return res.status(400).json({ error: "ID do agendamento e avaliação são obrigatórios." });
+    }
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({ error: "A avaliação deve ser entre 1 e 5." });
+    }
+
+    try {
+      const appointment = db.prepare("SELECT * FROM appointments WHERE id = ?").get(appointment_id) as Appointment;
+      if (!appointment) {
+        return res.status(404).json({ error: "Agendamento não encontrado." });
+      }
+      // Basic authorization: check if the appointment belongs to the client submitting the review
+      if (appointment.client_id !== client_id) {
+        return res.status(403).json({ error: "Você não tem permissão para avaliar este agendamento." });
+      }
+      if (appointment.status !== 'COMPLETED') {
+        return res.status(400).json({ error: "Só é possível avaliar agendamentos concluídos." });
+      }
+
+      const result = db.prepare(
+        `INSERT INTO reviews (appointment_id, client_id, professional_id, store_id, rating, comment)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        appointment_id,
+        appointment.client_id,
+        appointment.professional_id,
+        appointment.store_id,
+        rating,
+        comment || null
+      );
+
+      res.status(201).json({ id: result.lastInsertRowid });
+    } catch (error: any) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return res.status(400).json({ error: "Este agendamento já foi avaliado." });
+      }
+      console.error("Error adding review:", error);
+      res.status(500).json({ error: "Erro ao salvar avaliação." });
     }
   });
 

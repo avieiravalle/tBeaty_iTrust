@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calendar as CalendarIcon, Clock, User as UserIcon, Plus, X, XCircle, Loader, Building } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, User as UserIcon, Plus, X, XCircle, Loader, Building, Star } from 'lucide-react';
 import { api } from './services/api.ts';
 import { Appointment, Service, User, Client, Store } from './types.ts';
 import { Card } from './UI.tsx';
@@ -13,6 +13,9 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [reviewingAppointment, setReviewingAppointment] = useState<Appointment | null>(null);
+  const [reviewData, setReviewData] = useState({ rating: 0, comment: '' });
   
   // Dados para o modal de agendamento
   const [stores, setStores] = useState<Store[]>([]);
@@ -106,6 +109,37 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
 
   const handleCloseModal = () => setIsModalOpen(false);
 
+  const handleOpenReviewModal = (appointment: Appointment) => {
+    setReviewingAppointment(appointment);
+    setIsReviewModalOpen(true);
+  };
+
+  const handleCloseReviewModal = () => {
+    setIsReviewModalOpen(false);
+    setReviewingAppointment(null);
+    setReviewData({ rating: 0, comment: '' });
+  };
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewingAppointment || reviewData.rating === 0) {
+      alert("Por favor, selecione uma avaliação de 1 a 5 estrelas.");
+      return;
+    }
+    try {
+      await api.addReview({
+        appointment_id: reviewingAppointment.id,
+        rating: reviewData.rating,
+        comment: reviewData.comment,
+        client_id: client.id, // Pass client id for backend auth check
+      });
+      handleCloseReviewModal();
+      fetchAppointments(); // Refresh the list to show the new review status
+    } catch (error: any) {
+      alert(`Erro ao enviar avaliação: ${error.message}`);
+    }
+  };
+
   const handleServiceToggle = (serviceId: string) => {
     setFormData(prev => {
       const current = prev.service_ids;
@@ -180,16 +214,26 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
                 <p className="text-zinc-500 text-sm flex items-center gap-2"><UserIcon size={14} /> {apt.professional_name}</p>
               </div>
               
-              {apt.status === 'PENDING' && new Date(apt.start_time) > new Date() && (
-                <button onClick={() => handleCancelAppointment(apt.id)} className="px-4 py-2 bg-rose-100 text-rose-700 rounded-lg hover:bg-rose-200 transition-colors flex items-center justify-center gap-2">
-                    <XCircle size={16} /> Cancelar
-                </button>
-              )}
-              {apt.status !== 'PENDING' && (
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${apt.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                  {apt.status === 'COMPLETED' ? 'Concluído' : 'Cancelado'}
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {apt.status === 'PENDING' && new Date(apt.start_time) > new Date() ? (
+                  <button onClick={() => handleCancelAppointment(apt.id)} className="px-4 py-2 bg-rose-100 text-rose-700 rounded-lg hover:bg-rose-200 transition-colors flex items-center justify-center gap-2">
+                      <XCircle size={16} /> Cancelar
+                  </button>
+                ) : apt.status === 'COMPLETED' ? (
+                  apt.review_id ? (
+                      <div className="flex items-center gap-2 text-amber-500 text-sm font-medium">
+                          <Star size={16} className="fill-current" />
+                          <span>{apt.review_rating} Estrelas</span>
+                      </div>
+                  ) : (
+                      <button onClick={() => handleOpenReviewModal(apt)} className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition-colors flex items-center justify-center gap-2">
+                          <Star size={16} /> Avaliar
+                      </button>
+                  )
+                ) : apt.status === 'CANCELLED' ? (
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-700`}>Cancelado</span>
+                ) : null}
+              </div>
             </Card>
           ))
         )}
@@ -218,6 +262,34 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
               </form>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isReviewModalOpen && reviewingAppointment && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+                <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
+                    <h3 className="text-xl font-bold mb-2">Avaliar Serviço</h3>
+                    <p className="text-sm text-zinc-500 mb-6">Deixe sua opinião sobre o serviço de <strong>{reviewingAppointment.service_name}</strong> com <strong>{reviewingAppointment.professional_name}</strong>.</p>
+                    <form onSubmit={handleReviewSubmit} className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-zinc-700 mb-2">Sua avaliação</label>
+                            <div className="flex items-center justify-center gap-2">
+                                {[1, 2, 3, 4, 5].map((star) => (
+                                    <button key={star} type="button" onClick={() => setReviewData({ ...reviewData, rating: star })} className="text-amber-400 transition-transform hover:scale-110">
+                                        <Star size={32} className={reviewData.rating >= star ? 'fill-current' : ''} />
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-zinc-700 mb-1">Comentário (opcional)</label>
+                            <textarea value={reviewData.comment} onChange={(e) => setReviewData({ ...reviewData, comment: e.target.value })} rows={4} className="w-full p-4 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" placeholder="Conte-nos mais sobre sua experiência..." />
+                        </div>
+                        <div className="flex gap-3 pt-4"><button type="button" onClick={handleCloseReviewModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button><button type="submit" className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors">Enviar Avaliação</button></div>
+                    </form>
+                </motion.div>
+            </div>
         )}
       </AnimatePresence>
     </div>
