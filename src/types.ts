@@ -8,6 +8,8 @@ export interface User {
   commission_rate: number;
   store_id: number;
   store_code: string;
+  break_start_time?: string | null;
+  break_end_time?: string | null;
 }
 
 export interface Service {
@@ -45,6 +47,8 @@ export interface Client {
   name: string;
   phone: string;
   cep: string;
+  birth_date?: string | null;
+  password?: string; // Password is not always present on the client-side
 }
 
 export interface CommissionStats {
@@ -77,6 +81,13 @@ export interface DashboardStats {
   appointments: number;
   lowStock: number;
   monthlyGoal: number;
+}
+
+export interface StaffFinancialStats {
+  id: number;
+  name: string;
+  totalRevenue: number;
+  totalCommission: number;
 }
 
 export interface Notification {

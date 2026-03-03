@@ -1,11 +1,101 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
+import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 import { scryptSync, randomBytes, timingSafeEqual } from "crypto";
+import multer from "multer";
+import pkg from 'whatsapp-web.js';
+const { Client, LocalAuth } = pkg;
+import QRCode from 'qrcode';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+// Polyfill for __dirname in ES Modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// --- Configuração do WhatsApp Local (whatsapp-web.js) ---
+const whatsappClient = new Client({
+  authStrategy: new LocalAuth(), // Salva a sessão para não precisar escanear sempre
+  puppeteer: {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  }
+});
+
+let isWhatsappReady = false;
+let whatsappQrCode: string | null = null;
+let whatsappStatus = 'DISCONNECTED'; // DISCONNECTED, QR_RECEIVED, READY
+
+whatsappClient.on('qr', async (qr) => {
+  console.log('QR Code recebido no servidor');
+  try {
+    whatsappQrCode = await QRCode.toDataURL(qr);
+    whatsappStatus = 'QR_RECEIVED';
+  } catch (err) {
+    console.error('Erro ao gerar imagem do QR Code:', err);
+  }
+});
+
+whatsappClient.on('ready', () => {
+  console.log('WhatsApp conectado e pronto para enviar mensagens!');
+  isWhatsappReady = true;
+  whatsappStatus = 'READY';
+  whatsappQrCode = null;
+});
+
+whatsappClient.on('auth_failure', () => {
+  console.error('Falha na autenticação do WhatsApp. Apague a pasta .wwebjs_auth e reinicie se persistir.');
+  isWhatsappReady = false;
+  whatsappStatus = 'DISCONNECTED';
+});
+
+whatsappClient.on('disconnected', (reason) => {
+  console.log('WhatsApp desconectado:', reason);
+  isWhatsappReady = false;
+  whatsappStatus = 'DISCONNECTED';
+  whatsappQrCode = null;
+  // Reinicia o cliente para permitir nova conexão
+  whatsappClient.initialize();
+});
+
+whatsappClient.initialize().catch((err: any) => {
+  console.error("Erro ao inicializar o cliente do WhatsApp:", err);
+});
+
+// --- Configuração de Upload de Arquivos ---
+const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/svg+xml'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de arquivo inválido. Apenas PNG, JPG e SVG são permitidos.'));
+    }
+  },
+});
 
 const HASH_SEPARATOR = ".";
 
@@ -32,7 +122,7 @@ function verifyPassword(storedHash: string, suppliedPassword: string): boolean {
 const db = new Database("salon.db");
 
 // --- Database Schema Migration ---
-const LATEST_SCHEMA_VERSION = 5; // Increment this number with each schema change
+const LATEST_SCHEMA_VERSION = 8; // Increment this number with each schema change
 
 const currentVersion = db.pragma('user_version', { simple: true }) as number;
 
@@ -41,6 +131,7 @@ if (currentVersion < LATEST_SCHEMA_VERSION) {
   // For development, the simplest migration is to drop tables and recreate them.
   // In production, you would use a more sophisticated migration strategy.
   db.exec(`
+    DROP TABLE IF EXISTS client_stores;
     DROP TABLE IF EXISTS expenses;
     DROP TABLE IF EXISTS service_commissions;
     DROP TABLE IF EXISTS notifications;
@@ -70,6 +161,8 @@ db.exec(`
     role TEXT CHECK(role IN ('ADMIN', 'MANAGER', 'COLLABORATOR')) NOT NULL,
     commission_rate REAL DEFAULT 0,
     store_id INTEGER,
+    break_start_time TEXT,
+    break_end_time TEXT,
     FOREIGN KEY (store_id) REFERENCES stores(id)
   );
 
@@ -88,7 +181,16 @@ db.exec(`
     name TEXT NOT NULL,
     phone TEXT UNIQUE NOT NULL,
     cep TEXT NOT NULL,
-    password TEXT NOT NULL
+    password TEXT NOT NULL,
+    birth_date DATE
+  );
+
+  CREATE TABLE IF NOT EXISTS client_stores (
+    client_id INTEGER NOT NULL,
+    store_id INTEGER NOT NULL,
+    PRIMARY KEY (client_id, store_id),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+    FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS appointments (
@@ -192,6 +294,8 @@ async function startServer() {
   const PORT = parseInt(process.env.PORT || "3002", 10);
   
   app.use(express.json());
+  // Servir arquivos enviados estaticamente
+  app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
   // Auth Routes
   app.post("/api/auth/register-store", (req, res) => {
@@ -275,15 +379,34 @@ async function startServer() {
   });
 
   app.post("/api/auth/register-client", (req, res) => {
-    const { name, phone, cep, password } = req.body;
-    if (!name || !phone || !cep || !password) {
-      return res.status(400).json({ error: "Todos os campos são obrigatórios" });
+    const { name, phone, cep, password, storeId, birth_date } = req.body;
+    if (!name || !phone || !cep) {
+      return res.status(400).json({ error: "Nome, telefone e CEP são obrigatórios." });
+    }
+    if (!storeId) {
+        return res.status(400).json({ error: "A loja (storeId) é obrigatória para associar o cliente." });
+    }
+ 
+    const storeExists = db.prepare("SELECT id FROM stores WHERE id = ?").get(storeId);
+    if (!storeExists) {
+      // This error is likely due to a stale session after a database reset.
+      return res.status(400).json({ error: "A loja associada à sua sessão não foi encontrada. Por favor, saia e entre novamente no sistema." });
     }
     try {
-      const hashedPassword = hashPassword(password);
-      const result = db.prepare("INSERT INTO clients (name, phone, cep, password) VALUES (?, ?, ?, ?)")
-        .run(name, phone, cep, hashedPassword);
-      res.status(201).json({ id: result.lastInsertRowid, name, phone, cep });
+      const transaction = db.transaction(() => {
+        // If password is not provided (e.g., manager registering a client), generate a random one.
+        const finalPassword = password || randomBytes(16).toString('hex');
+        const hashedPassword = hashPassword(finalPassword);
+        const result = db.prepare("INSERT INTO clients (name, phone, cep, password, birth_date) VALUES (?, ?, ?, ?, ?)")
+          .run(name, phone, cep, hashedPassword, birth_date || null);
+        const clientId = result.lastInsertRowid;
+        // Associate client with the store
+        db.prepare("INSERT INTO client_stores (client_id, store_id) VALUES (?, ?)")
+          .run(clientId, storeId);
+        return { id: clientId, name, phone, cep };
+      });
+      const clientData = transaction();
+      res.status(201).json(clientData);
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return res.status(400).json({ error: "Este número de telefone já está cadastrado." });
@@ -322,30 +445,58 @@ async function startServer() {
 
   app.post("/api/services", (req, res) => {
     const { name, price, duration_minutes, category, storeId } = req.body;
-    const result = db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run(name, price, duration_minutes, category, storeId);
-    res.json({ id: result.lastInsertRowid });
+    if (!name || price === undefined || duration_minutes === undefined || !storeId) {
+      return res.status(400).json({ error: "Nome, preço, duração e ID da loja são obrigatórios." });
+    }
+    try {
+      const result = db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run(name, price, duration_minutes, category, storeId);
+      res.status(201).json({ id: result.lastInsertRowid });
+    } catch (error) {
+      console.error("Error adding service:", error);
+      res.status(500).json({ error: "Erro interno ao adicionar serviço." });
+    }
   });
 
   app.patch("/api/services/:id", (req, res) => {
     const { id } = req.params;
     const { name, price, duration_minutes, category } = req.body;
 
-    if (!name || price === undefined || duration_minutes === undefined) {
-      return res.status(400).json({ error: "Todos os campos são obrigatórios." });
+    const fields: string[] = [];
+    const params: (string | number | null)[] = [];
+
+    if (name !== undefined) {
+      fields.push("name = ?");
+      params.push(name);
+    }
+    if (price !== undefined) {
+      fields.push("price = ?");
+      params.push(price);
+    }
+    if (duration_minutes !== undefined) {
+      fields.push("duration_minutes = ?");
+      params.push(duration_minutes);
+    }
+    if (category !== undefined) {
+      fields.push("category = ?");
+      params.push(category);
     }
 
+    if (fields.length === 0) {
+      return res.status(400).json({ error: "Nenhum campo para atualizar foi fornecido." });
+    }
+
+    params.push(id); // for the WHERE clause
+
     try {
-      const result = db.prepare(`
-        UPDATE services 
-        SET name = ?, price = ?, duration_minutes = ?, category = ?
-        WHERE id = ?
-      `).run(name, price, duration_minutes, category, id);
+      const stmt = `UPDATE services SET ${fields.join(", ")} WHERE id = ?`;
+      const result = db.prepare(stmt).run(...params);
 
       if (result.changes === 0) {
         return res.status(404).json({ error: "Serviço não encontrado." });
       }
       res.json({ success: true });
     } catch (error) {
+      console.error("Service update error:", error);
       res.status(500).json({ error: "Erro ao atualizar o serviço." });
     }
   });
@@ -380,6 +531,28 @@ async function startServer() {
     const storeId = req.query.storeId as string;
     const staff = db.prepare("SELECT * FROM users WHERE role = 'COLLABORATOR' AND store_id = ?").all(storeId);
     res.json(staff);
+  });
+
+  app.post("/api/staff", (req, res) => {
+    const { name, email, commission_rate, store_id, break_start_time, break_end_time } = req.body;
+    if (!name || !email || commission_rate === undefined || !store_id) {
+      return res.status(400).json({ error: "Nome, email, comissão e ID da loja são obrigatórios." });
+    }
+    try {
+      // Generate a random password since it's not provided from the frontend
+      const randomPassword = randomBytes(16).toString('hex');
+      const hashedPassword = hashPassword(randomPassword);
+      const result = db.prepare(
+        "INSERT INTO users (name, email, password, role, commission_rate, store_id, break_start_time, break_end_time) VALUES (?, ?, ?, 'COLLABORATOR', ?, ?, ?, ?)"
+      ).run(name, email, hashedPassword, commission_rate, store_id, break_start_time || null, break_end_time || null);
+      res.status(201).json({ id: result.lastInsertRowid });
+    } catch (error: any) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        return res.status(400).json({ error: "Este e-mail já está em uso." });
+      }
+      console.error("Error adding staff:", error);
+      res.status(500).json({ error: "Erro ao adicionar profissional." });
+    }
   });
 
   app.get("/api/staff/:userId/service-commissions", (req, res) => {
@@ -429,42 +602,37 @@ async function startServer() {
       }
   });
 
-  app.post("/api/staff", (req, res) => {
-    const { name, email, password, commission_rate, store_id } = req.body;
-    if (!name || !email || !password || commission_rate === undefined || !store_id) {
-      return res.status(400).json({ error: "Todos os campos são obrigatórios." });
-    }
-    try {
-      const hashedPassword = hashPassword(password);
-      const result = db.prepare(
-        "INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, 'COLLABORATOR', ?, ?)"
-      ).run(name, email, hashedPassword, commission_rate, store_id);
-      res.status(201).json({ id: result.lastInsertRowid });
-    } catch (error: any) {
-      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return res.status(400).json({ error: "Este e-mail já está em uso." });
-      }
-      res.status(500).json({ error: "Erro ao adicionar profissional." });
-    }
-  });
-
   app.patch("/api/staff/:id", (req, res) => {
     const { id } = req.params;
-    const { name, email, commission_rate } = req.body;
-    // Password change is not handled here for simplicity.
-    if (!name || !email || commission_rate === undefined) {
-      return res.status(400).json({ error: "Nome, email e taxa de comissão são obrigatórios." });
+    const { name, email, commission_rate, break_start_time, break_end_time } = req.body;
+
+    const fields: string[] = [];
+    const params: (string | number | null)[] = [];
+
+    if (name !== undefined) { fields.push("name = ?"); params.push(name); }
+    if (email !== undefined) { fields.push("email = ?"); params.push(email); }
+    if (commission_rate !== undefined) { fields.push("commission_rate = ?"); params.push(commission_rate); }
+    // Allow setting breaks to null/empty
+    if (break_start_time !== undefined) { fields.push("break_start_time = ?"); params.push(break_start_time || null); }
+    if (break_end_time !== undefined) { fields.push("break_end_time = ?"); params.push(break_end_time || null); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: "Nenhum campo para atualizar foi fornecido." });
     }
+
+    params.push(id);
+
     try {
       const result = db.prepare(
-        "UPDATE users SET name = ?, email = ?, commission_rate = ? WHERE id = ? AND role = 'COLLABORATOR'"
-      ).run(name, email, commission_rate, id);
+        `UPDATE users SET ${fields.join(", ")} WHERE id = ? AND role = 'COLLABORATOR'`
+      ).run(...params);
 
       if (result.changes === 0) {
         return res.status(404).json({ error: "Profissional não encontrado ou não é um colaborador." });
       }
       res.json({ success: true });
     } catch (error: any) {
+      console.error("Error updating staff:", error);
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return res.status(400).json({ error: "Este e-mail já está em uso por outro usuário." });
       }
@@ -507,11 +675,99 @@ async function startServer() {
     res.json(appointments);
   });
 
+  app.get("/api/availability", (req, res) => {
+    const { professionalId, date, duration, storeId } = req.query;
+
+    if (!professionalId || !date || !duration || !storeId) {
+        return res.status(400).json({ error: "Profissional, data, duração e ID da loja são obrigatórios." });
+    }
+
+    try {
+        // Fetch store settings for working hours
+        const settings = db.prepare("SELECT key, value FROM settings WHERE store_id = ? AND key IN ('opening_time', 'closing_time')").all(storeId);
+        const settingsMap = settings.reduce((acc: any, curr: any) => {
+            acc[curr.key] = curr.value;
+            return acc;
+        }, {});
+
+        // 1. Define working hours, with fallbacks
+        const openingTimeStr = settingsMap.opening_time || '09:00';
+        const closingTimeStr = settingsMap.closing_time || '18:00';
+        
+        const [openingHour, openingMinute] = openingTimeStr.split(':').map(Number);
+        const [closingHour, closingMinute] = closingTimeStr.split(':').map(Number);
+
+        const professional = db.prepare("SELECT break_start_time, break_end_time FROM users WHERE id = ?").get(professionalId) as { break_start_time: string | null, break_end_time: string | null };
+
+        const slotInterval = 15; // minutes
+
+        // 2. Get existing appointments for the professional on that day
+        const appointments = db.prepare(`
+            SELECT start_time, end_time 
+            FROM appointments 
+            WHERE professional_id = ? 
+            AND store_id = ?
+            AND date(start_time) = date(?)
+            AND status != 'CANCELLED'
+        `).all(professionalId, storeId, date) as { start_time: string, end_time: string }[];
+
+        const bookedSlots = appointments.map(a => ({
+            start: new Date(a.start_time),
+            end: new Date(a.end_time)
+        }));
+
+        // Add professional's break to booked slots
+        if (professional && professional.break_start_time && professional.break_end_time) {
+            const dayStr = (date as string).split('T')[0];
+            const breakStart = new Date(`${dayStr}T${professional.break_start_time}`);
+            const breakEnd = new Date(`${dayStr}T${professional.break_end_time}`);
+            if (!isNaN(breakStart.getTime()) && !isNaN(breakEnd.getTime())) {
+                bookedSlots.push({ start: breakStart, end: breakEnd });
+            }
+        }
+
+        const availableSlots: string[] = [];
+        const day = new Date(`${date}T00:00:00`);
+        let currentSlot = new Date(new Date(day).setHours(openingHour, openingMinute, 0, 0));
+        const endOfDay = new Date(new Date(day).setHours(closingHour, closingMinute, 0, 0));
+
+        while (currentSlot < endOfDay) {
+            const potentialStartTime = new Date(currentSlot);
+            const potentialEndTime = new Date(potentialStartTime.getTime() + Number(duration) * 60000);
+
+            if (potentialEndTime > endOfDay) break;
+
+            const isOverlapping = bookedSlots.some(booked => (potentialStartTime < booked.end && potentialEndTime > booked.start));
+
+            if (!isOverlapping) availableSlots.push(potentialStartTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+
+            currentSlot = new Date(currentSlot.getTime() + slotInterval * 60000);
+        }
+        res.json(availableSlots);
+    } catch (error) {
+        console.error("Error fetching availability:", error);
+        res.status(500).json({ error: "Falha ao buscar horários." });
+    }
+  });
+
   app.post("/api/appointments", (req, res) => {
     const { client_id, professional_id, service_ids, start_time, storeId } = req.body;
 
     if (!service_ids || !Array.isArray(service_ids) || service_ids.length === 0) {
       return res.status(400).json({ error: "Pelo menos um serviço deve ser selecionado." });
+    }
+
+    if (!start_time) {
+      return res.status(400).json({ error: "Data e hora do agendamento são obrigatórias." });
+    }
+
+    const appointmentDate = new Date(start_time);
+    if (isNaN(appointmentDate.getTime())) {
+      return res.status(400).json({ error: "Data de agendamento inválida." });
+    }
+
+    if (appointmentDate < new Date()) {
+      return res.status(400).json({ error: "Não é possível realizar agendamentos para datas ou horários passados." });
     }
 
     const transaction = db.transaction(() => {
@@ -635,6 +891,52 @@ async function startServer() {
     });
   });
 
+  app.get("/api/dashboard/staff-stats", (req, res) => {
+    const storeId = req.query.storeId as string | undefined;
+    const period = (req.query.period as string) || 'monthly';
+
+    if (!storeId) {
+      return res.status(400).json({ error: "Store ID is required." });
+    }
+
+    const now = new Date();
+    let startDate = new Date(now.getFullYear(), 0, 1).toISOString();
+
+    if (period === 'daily') {
+      startDate = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+    } else if (period === 'weekly') {
+      const startOfWeek = new Date();
+      const day = startOfWeek.getDay();
+      const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+      startOfWeek.setDate(diff);
+      startOfWeek.setHours(0, 0, 0, 0);
+      startDate = startOfWeek.toISOString();
+    } else if (period === 'monthly') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    }
+
+    try {
+      const staffStats = db.prepare(`
+        SELECT
+          u.id,
+          u.name,
+          SUM(s.price) as totalRevenue,
+          SUM(s.price * COALESCE(sc.commission_rate, u.commission_rate) / 100) as totalCommission
+        FROM appointments a
+        JOIN users u ON a.professional_id = u.id
+        JOIN services s ON a.service_id = s.id
+        LEFT JOIN service_commissions sc ON sc.user_id = u.id AND sc.service_id = s.id
+        WHERE a.store_id = ? AND a.start_time >= ? AND a.status = 'COMPLETED' AND u.role = 'COLLABORATOR'
+        GROUP BY u.id, u.name
+        ORDER BY totalRevenue DESC
+      `).all(storeId, startDate);
+      res.json(staffStats);
+    } catch (error) {
+      console.error("Error fetching staff stats:", error);
+      res.status(500).json({ error: "Failed to fetch staff financial stats." });
+    }
+  });
+
   app.get("/api/expenses", (req, res) => {
     const storeId = req.query.storeId as string;
     const expenses = db.prepare("SELECT * FROM expenses WHERE store_id = ? ORDER BY date DESC").all(storeId);
@@ -688,8 +990,85 @@ async function startServer() {
   });
 
   app.get("/api/clients", (req, res) => {
-    // Clients are global now, not tied to a store. Return all clients.
-    const clients = db.prepare("SELECT id, name, phone, cep FROM clients").all();
+    const storeId = req.query.storeId as string;
+    if (!storeId) {
+      return res.status(400).json({ error: "O ID da loja é obrigatório." });
+    }
+    // Retorna clientes que têm agendamento na loja OU foram associados a ela.
+    const clients = db.prepare(`
+      SELECT 
+        c.id, 
+        c.name, 
+        c.phone, 
+        c.cep, 
+        (SELECT COUNT(*) FROM appointments a2 WHERE a2.client_id = c.id AND a2.store_id = ?) as appointment_count
+      FROM clients c
+      WHERE 
+        c.id IN (SELECT DISTINCT client_id FROM appointments WHERE store_id = ?)
+        OR
+        c.id IN (SELECT client_id FROM client_stores WHERE store_id = ?)
+      ORDER BY c.name
+    `).all(storeId, storeId, storeId);
+    res.json(clients);
+  });
+
+  app.patch("/api/clients/:id", (req, res) => {
+    const { id } = req.params;
+    const { name, phone, cep, birth_date } = req.body;
+
+    const fields: string[] = [];
+    const params: (string | number | null)[] = [];
+
+    if (name !== undefined) { fields.push("name = ?"); params.push(name); }
+    if (phone !== undefined) { fields.push("phone = ?"); params.push(phone); }
+    if (cep !== undefined) { fields.push("cep = ?"); params.push(cep); }
+    if (birth_date !== undefined) { fields.push("birth_date = ?"); params.push(birth_date || null); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: "Nenhum campo para atualizar foi fornecido." });
+    }
+    params.push(id);
+
+    try {
+      db.prepare(`UPDATE clients SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') { return res.status(400).json({ error: "Este número de telefone já está em uso." }); }
+      res.status(500).json({ error: "Falha ao atualizar o cliente." });
+    }
+  });
+
+  app.get("/api/opportunities/inactive-clients", (req, res) => {
+    const storeId = req.query.storeId as string;
+    if (!storeId) {
+      return res.status(400).json({ error: "O ID da loja é obrigatório." });
+    }
+    // Clients who haven't had an appointment in the last 90 days
+    const clients = db.prepare(`
+      SELECT c.id, c.name, c.phone, c.cep, MAX(a.start_time) as last_appointment
+      FROM clients c
+      JOIN appointments a ON c.id = a.client_id
+      WHERE a.store_id = ?
+      GROUP BY c.id
+      HAVING last_appointment < date('now', '-90 days')
+      ORDER BY last_appointment ASC
+    `).all(storeId);
+    res.json(clients);
+  });
+
+  app.get("/api/opportunities/birthday-clients", (req, res) => {
+    const storeId = req.query.storeId as string;
+    if (!storeId) {
+      return res.status(400).json({ error: "O ID da loja é obrigatório." });
+    }
+    // Find clients whose birthday is in the current month
+    const clients = db.prepare(`
+      SELECT c.id, c.name, c.phone, c.cep, c.birth_date
+      FROM clients c
+      WHERE c.id IN (SELECT client_id FROM client_stores WHERE store_id = ?)
+      AND strftime('%m', c.birth_date) = strftime('%m', 'now')
+      ORDER BY strftime('%d', c.birth_date)
+    `).all(storeId);
     res.json(clients);
   });
 
@@ -807,10 +1186,73 @@ async function startServer() {
     }
   });
 
+  app.post("/api/whatsapp/send", async (req, res) => {
+    const { to, message } = req.body;
+    if (!to || !message) {
+      return res.status(400).json({ error: "Número de destino e mensagem são obrigatórios." });
+    }
+
+    if (!isWhatsappReady) {
+      return res.status(503).json({ error: "O WhatsApp ainda não está conectado. Verifique o terminal do servidor e escaneie o QR Code." });
+    }
+
+    try {
+      // Formata o número para o padrão do whatsapp-web.js (ex: 5511999999999@c.us)
+      // Remove o '+' se existir e garante que tenha apenas números
+      const cleanNumber = to.replace(/\D/g, '');
+      const chatId = `${cleanNumber}@c.us`;
+
+      await whatsappClient.sendMessage(chatId, message);
+      
+      res.json({ success: true, message: "Mensagem enviada com sucesso." });
+    } catch (error: any) {
+      console.error("Erro ao enviar via WhatsApp Local:", error);
+      res.status(500).json({ error: `Falha ao enviar mensagem: ${error.message}` });
+    }
+  });
+
+  app.get("/api/whatsapp/status", (req, res) => {
+    res.json({ status: whatsappStatus, qrCode: whatsappQrCode });
+  });
+
+  app.post("/api/whatsapp/logout", async (req, res) => {
+    try {
+      await whatsappClient.logout();
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Falha ao desconectar WhatsApp." });
+    }
+  });
+
+  // Rota para upload de imagem
+  app.post("/api/upload/image", (req, res) => {
+    const handleUpload = upload.single('image');
+    handleUpload(req, res, (err) => {
+      if (err) {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ error: 'Arquivo muito grande. O limite é de 5MB.' });
+          }
+        }
+        return res.status(400).json({ error: err.message });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: "Nenhum arquivo foi enviado." });
+      }
+      const fileUrl = `/uploads/${req.file.filename}`;
+      res.json({ url: fileUrl });
+    });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        watch: {
+          ignored: ['**/.wwebjs_auth/**', '**/.wwebjs_cache/**', '**/salon.db', '**/salon.db-journal']
+        }
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

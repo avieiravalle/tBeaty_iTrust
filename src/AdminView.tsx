@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, LogOut, LayoutDashboard, Calendar, Scissors, Package, DollarSign, Users, Settings } from 'lucide-react';
+import { ArrowLeft, LogOut, LayoutDashboard, Calendar, Scissors, Package, DollarSign, Users, Settings, Heart, Radar } from 'lucide-react';
 import { AuthView } from './AuthView';
 import { User } from './types';
 import { SidebarItem } from './UI';
+import { ThemeLoader } from './ThemeLoader';
 import { DashboardView } from './DashboardView';
 import { AppointmentsView } from './AppointmentsView';
 import { ServicesView } from './ServicesView';
@@ -10,10 +11,13 @@ import { InventoryView } from './InventoryView';
 import { StaffView } from './StaffView';
 import { SettingsView } from './SettingsView';
 import { CommissionsView } from './CommissionsView';
+import { ClientsView } from './ClientsView';
+import { OpportunitiesView } from './OpportunitiesView.tsx';
 import { NotificationCenter } from './NotificationCenter';
 
 const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }) => {
   const [activeView, setActiveView] = useState('dashboard');
+  const [opportunityType, setOpportunityType] = useState<'inactive' | 'birthday' | null>(null);
 
   const managerViews = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -21,6 +25,8 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
     { id: 'services', label: 'Serviços', icon: Scissors },
     { id: 'inventory', label: 'Estoque', icon: Package },
     { id: 'staff', label: 'Profissionais', icon: Users },
+    { id: 'clients', label: 'Clientes', icon: Heart },
+    { id: 'opportunities', label: 'Oportunidades', icon: Radar },
     { id: 'settings', label: 'Configurações', icon: Settings }
   ];
 
@@ -35,10 +41,15 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
     setActiveView(user.role === 'MANAGER' ? 'dashboard' : 'appointments');
   }, [user.role]);
 
+  const handleOpportunityClick = (type: 'inactive' | 'birthday') => {
+    setOpportunityType(type);
+    setActiveView('opportunities');
+  };
+
   const renderActiveView = () => {
     switch (activeView) {
       case 'dashboard':
-        return <DashboardView storeId={user.store_id} />;
+        return <DashboardView storeId={user.store_id} onOpportunityClick={handleOpportunityClick} />;
       case 'appointments':
         return <AppointmentsView role={user.role} userId={user.id} storeId={user.store_id} />;
       case 'services':
@@ -48,9 +59,13 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
       case 'staff':
         return <StaffView storeId={user.store_id} />;
       case 'settings':
-        return <SettingsView storeId={user.store_id} />;
+        return <SettingsView storeId={user.store_id} storeCode={user.store_code} />;
+      case 'clients':
+        return <ClientsView storeId={user.store_id} />;
       case 'commissions':
         return <CommissionsView userId={user.id} />;
+      case 'opportunities':
+        return <OpportunitiesView storeId={user.store_id} initialTab={opportunityType || 'inactive'} />;
       default:
         return <DashboardView storeId={user.store_id} />;
     }
@@ -133,5 +148,9 @@ export const AdminView = ({ onBack, initialRegister = false }: { onBack: () => v
     );
   }
 
-  return <AdminDashboard user={user} onLogout={handleLogout} />;
+  return (
+    <ThemeLoader storeId={user.store_id}>
+      <AdminDashboard user={user} onLogout={handleLogout} />
+    </ThemeLoader>
+  );
 };

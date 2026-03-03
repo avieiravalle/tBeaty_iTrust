@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, User as UserIcon, Edit, XCircle, AtSign, Percent, Eye, EyeOff } from 'lucide-react';
+import { Plus, Edit, XCircle, Briefcase, Percent, Clock, DollarSign } from 'lucide-react';
 import { api } from './services/api.ts';
 import { User, Service } from './types.ts';
 import { Card } from './UI.tsx';
@@ -11,85 +11,75 @@ interface StaffViewProps {
 
 export const StaffView = ({ storeId }: StaffViewProps) => {
   const [staff, setStaff] = useState<User[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<User | null>(null);
-  const [specificCommissions, setSpecificCommissions] = useState<Record<string, string>>({});
-  const [showPassword, setShowPassword] = useState(false);
+  const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
+  const [commissionEditingStaff, setCommissionEditingStaff] = useState<User | null>(null);
+  const [allServices, setAllServices] = useState<Service[]>([]);
+  const [serviceCommissions, setServiceCommissions] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
-    commission_rate: '',
+    commission_rate: '0',
+    break_start_time: '',
+    break_end_time: '',
   });
 
   const fetchStaff = useCallback(async () => {
     try {
       const data = await api.getStaff(storeId);
+      const servicesData = await api.getServices(storeId);
       setStaff(data);
     } catch (error) {
       console.error("Failed to fetch staff:", error);
     }
   }, [storeId]);
 
-  const fetchServices = useCallback(async () => {
-    try {
-      const data = await api.getServices(storeId);
-      setServices(data);
-    } catch (error) {
-      console.error("Failed to fetch services:", error);
-    }
-  }, [storeId]);
-
   useEffect(() => {
     fetchStaff();
-    fetchServices();
-  }, [fetchStaff, fetchServices]);
+  }, [fetchStaff]);
 
   const handleOpenAddModal = () => {
     setEditingStaff(null);
-    setFormData({ name: '', email: '', password: '', commission_rate: '30' }); // Default commission
-    setSpecificCommissions({});
-    setShowPassword(false);
+    setFormData({ name: '', email: '', password: '', commission_rate: '0', break_start_time: '', break_end_time: '' });
     setIsModalOpen(true);
   };
 
-  const handleOpenEditModal = async (user: User) => {
+  const handleOpenEditModal = (user: User) => {
     setEditingStaff(user);
     setFormData({
       name: user.name,
       email: user.email,
-      password: '', // Password is not edited here for security
+      password: '', // Password is not edited here
       commission_rate: user.commission_rate.toString(),
+      break_start_time: user.break_start_time || '',
+      break_end_time: user.break_end_time || '',
     });
-    try {
-      const commissions = await api.getStaffServiceCommissions(user.id);
-      const commissionStrings: Record<string, string> = {};
-      for (const key in commissions) {
-        commissionStrings[key] = commissions[key].toString();
-      }
-      setSpecificCommissions(commissionStrings);
-    } catch (error) {
-      console.error("Failed to fetch specific commissions", error);
-      setSpecificCommissions({});
-    }
     setIsModalOpen(true);
   };
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setEditingStaff(null);
-    setSpecificCommissions({});
-    setShowPassword(false);
-    setFormData({ name: '', email: '', password: '', commission_rate: '' });
   };
 
-  const handleSpecificCommissionChange = (serviceId: string, value: string) => {
-    setSpecificCommissions(prev => ({
-      ...prev,
-      [serviceId]: value,
-    }));
+  const handleOpenCommissionModal = async (user: User) => {
+    setCommissionEditingStaff(user);
+    try {
+      const [servicesData, commissionsData] = await Promise.all([
+        api.getServices(storeId),
+        api.getStaffServiceCommissions(user.id)
+      ]);
+      setAllServices(servicesData);
+      setServiceCommissions(Object.fromEntries(Object.entries(commissionsData).map(([k, v]) => [k, v.toString()])));
+      setIsCommissionModalOpen(true);
+    } catch (error) {
+      alert('Falha ao carregar dados de comissão.');
+    }
   };
+
+  const handleCloseCommissionModal = () => setIsCommissionModalOpen(false);
 
   const handleSave = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,24 +88,14 @@ export const StaffView = ({ storeId }: StaffViewProps) => {
         name: formData.name,
         email: formData.email,
         commission_rate: parseFloat(formData.commission_rate) || 0,
+        break_start_time: formData.break_start_time || null,
+        break_end_time: formData.break_end_time || null,
       };
 
       if (editingStaff) {
         await api.updateStaff(editingStaff.id, staffData);
-        await api.updateStaffServiceCommissions(editingStaff.id, specificCommissions);
       } else {
-        if (!formData.password) {
-          alert("A senha é obrigatória para novos profissionais.");
-          return;
-        }
-        const newUser = await api.addStaff({ 
-            ...staffData, 
-            password: formData.password, 
-            store_id: storeId 
-        });
-        if (Object.keys(specificCommissions).length > 0) {
-          await api.updateStaffServiceCommissions(newUser.id, specificCommissions);
-        }
+        await api.addStaff({ ...staffData, store_id: storeId });
       }
       
       handleCloseModal();
@@ -124,10 +104,22 @@ export const StaffView = ({ storeId }: StaffViewProps) => {
       console.error("Failed to save staff:", error);
       alert(`Erro ao salvar profissional: ${error.message}`);
     }
-  }, [formData, storeId, fetchStaff, editingStaff, specificCommissions]);
+  }, [formData, storeId, fetchStaff, editingStaff]);
+
+  const handleSaveCommissions = async () => {
+    if (!commissionEditingStaff) return;
+    try {
+      await api.updateStaffServiceCommissions(commissionEditingStaff.id, serviceCommissions);
+      handleCloseCommissionModal();
+      alert('Comissões atualizadas com sucesso!');
+    } catch (error: any) {
+      console.error("Failed to save commissions:", error);
+      alert(`Erro ao salvar comissões: ${error.message}`);
+    }
+  };
 
   const handleDelete = useCallback(async (userId: number) => {
-    if (window.confirm('Tem certeza que deseja excluir este profissional? Esta ação não pode ser desfeita.')) {
+    if (window.confirm('Tem certeza que deseja excluir este profissional?')) {
       try {
         await api.deleteStaff(userId);
         await fetchStaff();
@@ -151,25 +143,23 @@ export const StaffView = ({ storeId }: StaffViewProps) => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {staff.map(user => (
           <Card key={user.id} className="group hover:border-black transition-colors relative">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-3 bg-zinc-100 rounded-lg group-hover:bg-black group-hover:text-white transition-colors"><UserIcon size={24} /></div>
-            </div>
+            <div className="p-2 bg-zinc-100 rounded-lg group-hover:bg-black group-hover:text-white transition-colors inline-block mb-4"><Briefcase size={20} /></div>
             <h4 className="font-bold text-lg mb-1">{user.name}</h4>
-            <p className="text-zinc-500 text-sm flex items-center gap-1.5 mb-2"><AtSign size={14} />{user.email}</p>
-            <p className="text-zinc-500 text-sm flex items-center gap-1.5"><Percent size={14} />{user.commission_rate}% de comissão</p>
+            <p className="text-zinc-500 text-sm truncate">{user.email}</p>
+            <div className="mt-2 flex items-center gap-4 text-sm">
+                <p className="text-zinc-500 flex items-center gap-1"><Percent size={14} />{user.commission_rate}%</p>
+                {user.break_start_time && user.break_end_time && (
+                    <p className="text-zinc-500 flex items-center gap-1"><Clock size={14} />{user.break_start_time} - {user.break_end_time}</p>
+                )}
+            </div>
             <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button 
-                onClick={() => handleOpenEditModal(user)}
-                className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-black"
-                aria-label="Editar profissional"
-              >
+              <button onClick={() => handleOpenCommissionModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600" aria-label="Comissões">
+                <DollarSign size={16} />
+              </button>
+              <button onClick={() => handleOpenEditModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-black" aria-label="Editar">
                 <Edit size={16} />
               </button>
-              <button 
-                onClick={() => handleDelete(user.id)}
-                className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-rose-50 hover:text-rose-600"
-                aria-label="Excluir profissional"
-              >
+              <button onClick={() => handleDelete(user.id)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-rose-50 hover:text-rose-600" aria-label="Excluir">
                 <XCircle size={16} />
               </button>
             </div>
@@ -185,39 +175,47 @@ export const StaffView = ({ storeId }: StaffViewProps) => {
               <form onSubmit={handleSave} className="space-y-4">
                 <div><label className="block text-sm font-medium text-zinc-700 mb-1">Nome Completo</label><input required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
                 <div><label className="block text-sm font-medium text-zinc-700 mb-1">E-mail</label><input required type="email" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} /></div>
-                {!editingStaff && (
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-700 mb-1">Senha Provisória</label>
-                    <div className="relative">
-                      <input required type={showPassword ? 'text' : 'password'} className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none pr-10" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
-                      <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-black">
-                        {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Taxa de Comissão (%)</label><input required type="number" step="1" min="0" max="100" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.commission_rate} onChange={e => setFormData({...formData, commission_rate: e.target.value})} /></div>
+                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Comissão Padrão (%)</label><input required type="number" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.commission_rate} onChange={e => setFormData({...formData, commission_rate: e.target.value})} /></div>
                 
-                {editingStaff && (
-                  <div className="pt-4 mt-4 border-t border-zinc-200">
-                    <h4 className="text-md font-bold mb-2">Comissões Específicas</h4>
-                    <p className="text-xs text-zinc-500 mb-4">Defina uma comissão diferente para serviços específicos. Se o campo estiver vazio, a taxa geral de {formData.commission_rate}% será aplicada.</p>
-                    <div className="max-h-40 overflow-y-auto space-y-2 pr-2 -mr-2">
-                      {services.map(service => (
-                        <div key={service.id} className="flex items-center justify-between gap-4 bg-zinc-50/80 p-2 rounded-lg">
-                          <label className="text-sm text-zinc-600 flex-1 truncate" title={service.name}>{service.name}</label>
-                          <div className="relative w-24">
-                            <input type="number" step="1" min="0" max="100" className="w-full pl-2 pr-6 py-1 border border-zinc-200 rounded-md focus:ring-1 focus:ring-black outline-none" placeholder={formData.commission_rate} value={specificCommissions[service.id] || ''} onChange={e => handleSpecificCommissionChange(service.id.toString(), e.target.value)} />
-                            <Percent size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400" />
-                          </div>
+                <div className="pt-2">
+                    <label className="block text-sm font-medium text-zinc-700 mb-1">Horário de Pausa (Almoço)</label>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label htmlFor="break_start_time" className="text-xs text-zinc-500">Início</label>
+                            <input id="break_start_time" type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_start_time} onChange={e => setFormData({...formData, break_start_time: e.target.value})} />
                         </div>
-                      ))}
+                        <div>
+                            <label htmlFor="break_end_time" className="text-xs text-zinc-500">Fim</label>
+                            <input id="break_end_time" type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_end_time} onChange={e => setFormData({...formData, break_end_time: e.target.value})} />
+                        </div>
                     </div>
-                  </div>
-                )}
+                </div>
 
                 <div className="flex gap-3 pt-4"><button type="button" onClick={handleCloseModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button><button type="submit" className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors">Salvar</button></div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isCommissionModalOpen && commissionEditingStaff && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8">
+              <h3 className="text-xl font-bold mb-2">Comissões por Serviço</h3>
+              <p className="text-sm text-zinc-500 mb-6">Defina comissões específicas para <strong>{commissionEditingStaff.name}</strong>. Se o campo estiver vazio, a taxa padrão de {commissionEditingStaff.commission_rate}% será usada.</p>
+              <div className="space-y-3 max-h-80 overflow-y-auto pr-2">
+                {allServices.map(service => (
+                  <div key={service.id} className="flex items-center justify-between gap-4 p-3 bg-zinc-50 rounded-xl">
+                    <span className="font-medium text-sm">{service.name}</span>
+                    <div className="relative w-24">
+                      <input type="number" placeholder={commissionEditingStaff.commission_rate.toString()} value={serviceCommissions[service.id] || ''} onChange={(e) => setServiceCommissions(prev => ({ ...prev, [service.id]: e.target.value }))} className="w-full pl-3 pr-6 py-1 border border-zinc-200 rounded-lg text-right focus:ring-2 focus:ring-black outline-none" />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-3 pt-6"><button type="button" onClick={handleCloseCommissionModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button><button type="button" onClick={handleSaveCommissions} className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors">Salvar Comissões</button></div>
             </motion.div>
           </div>
         )}

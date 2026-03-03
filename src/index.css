@@ -5,3 +5,8 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
+
+:root {
+  --color-primary: #000000;
+  --color-secondary: #6366f1;
+}

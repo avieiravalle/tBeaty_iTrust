@@ -27,3 +27,7 @@ yarn-error.log*
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# WhatsApp Session Data
+.wwebjs_auth/
+.wwebjs_cache/

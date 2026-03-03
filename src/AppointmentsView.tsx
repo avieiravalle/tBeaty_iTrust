@@ -1,45 +1,53 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, CheckCircle2, XCircle, Clock, UserPlus, History, Heart, Users } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, User as UserIcon, Plus, X, CheckCircle, XCircle, Loader } from 'lucide-react';
 import { api } from './services/api.ts';
-import { Role, User, Service, Appointment, Client } from './types.ts';
+import { Appointment, Service, User, Client } from './types.ts';
 import { Card } from './UI.tsx';
 
 interface AppointmentsViewProps {
-  role: Role;
-  userId?: number;
+  role: 'MANAGER' | 'COLLABORATOR' | 'ADMIN';
+  userId: number;
   storeId: number;
 }
 
 export const AppointmentsView = ({ role, userId, storeId }: AppointmentsViewProps) => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);  
-  const [newAppt, setNewAppt] = useState({ client_id: '', professional_id: '', service_id: '', start_time: '' });
-  const [selectedClientHistory, setSelectedClientHistory] = useState<Appointment[]>([]);
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [availableSlots, setAvailableSlots] = useState<string[]>([]);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+  
+  const [formData, setFormData] = useState({
+    client_id: '',
+    professional_id: role === 'COLLABORATOR' ? userId.toString() : '',
+    service_ids: [] as string[],
+    date: '',
+    time: ''
+  });
 
   const fetchData = useCallback(async () => {
     try {
-      const [appointmentsData, clientsData, servicesData, staffData] = await Promise.all([
+      const [appointmentsData, servicesData, staffData, clientsData] = await Promise.all([
         api.getAppointments(storeId),
-        api.getClients(),
         api.getServices(storeId),
-        api.getStaff(storeId)
+        api.getStaff(storeId),
+        api.getClients(storeId)
       ]);
-
-      setAppointments(
-        role === 'COLLABORATOR' && userId 
-          ? appointmentsData.filter(a => a.professional_id === userId) 
-          : appointmentsData
-      );
-      setClients(clientsData);
+      
+      // Filter appointments based on role
+      const filteredAppointments = role === 'COLLABORATOR' 
+        ? appointmentsData.filter(a => a.professional_id === userId)
+        : appointmentsData;
+        
+      setAppointments(filteredAppointments);
       setServices(servicesData);
       setStaff(staffData);
+      setClients(clientsData);
     } catch (error) {
-      console.error("Failed to fetch appointment data:", error);
+      console.error("Failed to fetch data:", error);
     }
   }, [storeId, role, userId]);
 
@@ -47,138 +55,212 @@ export const AppointmentsView = ({ role, userId, storeId }: AppointmentsViewProp
     fetchData();
   }, [fetchData]);
 
-  useEffect(() => {
-    if (newAppt.client_id) {
-      const client = clients.find(c => c.id === parseInt(newAppt.client_id));
-      setSelectedClient(client || null);
-      if (client) {
-        api.getClientHistory(client.id).then(setSelectedClientHistory);
-      }
-    } else {
-      setSelectedClient(null);
-      setSelectedClientHistory([]);
-    }
-  }, [newAppt.client_id, clients]);
+  // Calculate total duration of selected services
+  const totalDuration = useMemo(() => {
+    return formData.service_ids.reduce((total, id) => {
+        const service = services.find(s => s.id.toString() === id);
+        return total + (service ? service.duration_minutes : 0);
+    }, 0);
+  }, [formData.service_ids, services]);
 
-  const handleCreate = useCallback(async (e: React.FormEvent) => {
+  // Fetch available slots when dependencies change
+  useEffect(() => {
+    if (formData.date && formData.professional_id && totalDuration > 0) {
+        const fetchSlots = async () => {
+            setIsLoadingSlots(true);
+            setAvailableSlots([]); // Clear previous slots
+            try {
+                const slots = await api.getAvailability(
+                    parseInt(formData.professional_id),
+                    formData.date,
+                    totalDuration,
+                    storeId
+                );
+                setAvailableSlots(slots);
+            } catch (error) {
+                console.error("Failed to fetch slots", error);
+                setAvailableSlots([]); // Ensure it's empty on error
+            } finally {
+                setIsLoadingSlots(false);
+            }
+        };
+        fetchSlots();
+    } else {
+        setAvailableSlots([]); // Clear slots if dependencies are not met
+    }
+  }, [formData.date, formData.professional_id, totalDuration, storeId]);
+
+  const handleOpenModal = () => {
+    setFormData({
+      client_id: '',
+      professional_id: role === 'COLLABORATOR' ? userId.toString() : '',
+      service_ids: [],
+      date: '',
+      time: ''
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => setIsModalOpen(false);
+
+  const handleServiceToggle = (serviceId: string) => {
+    setFormData(prev => {
+      const current = prev.service_ids;
+      if (current.includes(serviceId)) {
+        return { ...prev, service_ids: current.filter(id => id !== serviceId) };
+      } else {
+        return { ...prev, service_ids: [...current, serviceId] };
+      }
+    });
+  };
+
+  const handleCreateAppointment = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const start_time = new Date(`${formData.date}T${formData.time}`).toISOString();
+      
       await api.createAppointment({
-        client_id: parseInt(newAppt.client_id, 10),
-        professional_id: parseInt(newAppt.professional_id, 10),
-        service_ids: [parseInt(newAppt.service_id, 10)],
-        start_time: newAppt.start_time,
-        storeId,
+        client_id: parseInt(formData.client_id),
+        professional_id: parseInt(formData.professional_id),
+        service_ids: formData.service_ids.map(id => parseInt(id)),
+        start_time,
+        storeId
       });
-      setIsModalOpen(false);
-      setNewAppt({ client_id: '', professional_id: '', service_id: '', start_time: '' });
-      await fetchData();
-    } catch (err: any) {
-      console.error("Failed to create appointment:", err);
-      alert(err.message);
+      
+      handleCloseModal();
+      fetchData();
+    } catch (error: any) {
+      alert(`Erro ao criar agendamento: ${error.message}`);
     }
-  }, [newAppt, storeId, fetchData]);
+  };
 
-  const updateStatus = useCallback(async (id: number, status: Appointment['status']) => {
+  const handleStatusUpdate = async (id: number, status: 'COMPLETED' | 'CANCELLED') => {
     try {
       await api.updateAppointmentStatus(id, status);
-      await fetchData();
-    } catch (error) {
-      console.error("Failed to update status:", error);
-      alert("Erro ao atualizar status do agendamento.");
+      fetchData();
+    } catch (error: any) {
+      alert(`Erro ao atualizar status: ${error.message}`);
     }
-  }, [fetchData]);
+  };
+
+  // Get today's date in YYYY-MM-DD format for min attribute
+  const today = new Date().toISOString().split('T')[0];
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold">Agendamentos</h2>
-        {role !== 'COLLABORATOR' && (
-          <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl hover:bg-zinc-800 transition-colors">
-            <Plus size={18} />
-            <span>Novo Agendamento</span>
-          </button>
-        )}
+        <button onClick={handleOpenModal} className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl hover:bg-zinc-800 transition-colors">
+          <Plus size={18} />
+          <span>Novo Agendamento</span>
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {appointments.map(appt => (
-          <Card key={appt.id} className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className={`p-3 rounded-xl ${ appt.status === 'COMPLETED' ? 'bg-emerald-50 text-emerald-600' : appt.status === 'CANCELLED' ? 'bg-rose-50 text-rose-600' : 'bg-indigo-50 text-indigo-600' }`}>
-                <Clock size={20} />
-              </div>
-              <div>
-                <h4 className="font-bold text-zinc-900">{appt.client_name}</h4>
-                <p className="text-sm text-zinc-500">{appt.service_name} • {appt.professional_name}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-6">
-              <div className="text-right">
-                <p className="text-sm font-medium">{new Date(appt.start_time).toLocaleDateString('pt-BR')}</p>
-                <p className="text-xs text-zinc-400">{new Date(appt.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
-              </div>
-              <div className="flex gap-2">
-                {appt.status === 'PENDING' && (
-                  <>
-                    <button onClick={() => updateStatus(appt.id, 'COMPLETED')} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Concluir"><CheckCircle2 size={20} /></button>
-                    <button onClick={() => updateStatus(appt.id, 'CANCELLED')} className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Cancelar"><XCircle size={20} /></button>
-                  </>
-                )}
-                {appt.status !== 'PENDING' && (
-                  <span className={`text-xs font-bold px-2 py-1 rounded-md uppercase tracking-wider ${ appt.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700' }`}>
-                    {appt.status === 'COMPLETED' ? 'CONCLUÍDO' : 'CANCELADO'}
-                  </span>
-                )}
-              </div>
-            </div>
+      <div className="grid gap-4">
+        {appointments.length === 0 ? (
+          <Card className="text-center py-12 text-zinc-500">
+            Nenhum agendamento encontrado.
           </Card>
-        ))}
-        {appointments.length === 0 && <div className="text-center py-12 text-zinc-400">Nenhum agendamento encontrado.</div>}
+        ) : (
+          appointments.map(apt => (
+            <Card key={apt.id} className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="flex items-start gap-4">
+                <div className={`p-3 rounded-xl ${apt.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-600' : apt.status === 'CANCELLED' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
+                  <CalendarIcon size={24} />
+                </div>
+                <div>
+                  <h4 className="font-bold text-lg">{apt.client_name}</h4>
+                  <p className="text-zinc-500 text-sm flex items-center gap-2">
+                    <Clock size={14} />
+                    {new Date(apt.start_time).toLocaleString()}
+                  </p>
+                  <p className="text-zinc-500 text-sm flex items-center gap-2">
+                    <UserIcon size={14} />
+                    {apt.professional_name} • {apt.service_name}
+                  </p>
+                </div>
+              </div>
+              
+              {apt.status === 'PENDING' && (
+                <div className="flex gap-2 w-full md:w-auto">
+                  <button onClick={() => handleStatusUpdate(apt.id, 'COMPLETED')} className="flex-1 md:flex-none px-4 py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition-colors flex items-center justify-center gap-2">
+                    <CheckCircle size={16} /> Concluir
+                  </button>
+                  <button onClick={() => handleStatusUpdate(apt.id, 'CANCELLED')} className="flex-1 md:flex-none px-4 py-2 bg-rose-100 text-rose-700 rounded-lg hover:bg-rose-200 transition-colors flex items-center justify-center gap-2">
+                    <XCircle size={16} /> Cancelar
+                  </button>
+                </div>
+              )}
+              {apt.status !== 'PENDING' && (
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${apt.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                  {apt.status === 'COMPLETED' ? 'Concluído' : 'Cancelado'}
+                </span>
+              )}
+            </Card>
+          ))
+        )}
       </div>
 
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm overflow-y-auto">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl p-8 my-8">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div>
-                  <h3 className="text-xl font-bold mb-6">Novo Agendamento</h3>
-                  <form onSubmit={handleCreate} className="space-y-4">
-                    <div>
-                      <div className="flex justify-between items-center mb-1"><label className="block text-sm font-medium text-zinc-700">Cliente</label></div>
-                      <select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={newAppt.client_id} onChange={e => setNewAppt({...newAppt, client_id: e.target.value})}><option value="">Selecionar Cliente</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-                    </div>
-                    <div><label className="block text-sm font-medium text-zinc-700 mb-1">Profissional</label><select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={newAppt.professional_id} onChange={e => setNewAppt({...newAppt, professional_id: e.target.value})}><option value="">Selecionar Profissional</option>{staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-                    <div><label className="block text-sm font-medium text-zinc-700 mb-1">Serviço</label><select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={newAppt.service_id} onChange={e => setNewAppt({...newAppt, service_id: e.target.value})}><option value="">Selecionar Serviço</option>{services.map(s => <option key={s.id} value={s.id}>{s.name} (R${s.price})</option>)}</select></div>
-                    <div><label className="block text-sm font-medium text-zinc-700 mb-1">Data e Hora</label><input required type="datetime-local" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={newAppt.start_time} onChange={e => setNewAppt({...newAppt, start_time: e.target.value})} /></div>
-                    <div className="flex gap-3 pt-4"><button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button><button type="submit" className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors">Agendar Agora</button></div>
-                  </form>
-                </div>
-                <div className="bg-zinc-50 rounded-2xl p-6 border border-zinc-100">
-                  <h4 className="font-bold flex items-center gap-2 mb-4"><History size={18} className="text-zinc-400" />Resumo do Cliente</h4>
-                  {selectedClient ? (
-                    <div className="space-y-6">
-                      <div>
-                        <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1"><Users size={12} /> Contato</p>
-                        <p className="text-sm text-zinc-700 bg-white p-3 rounded-xl border border-zinc-100">{selectedClient.phone}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Histórico Recente</p>
-                        <div className="space-y-3">
-                          {selectedClientHistory.slice(0, 3).map(h => (
-                            <div key={h.id} className="bg-white p-3 rounded-xl border border-zinc-100 flex justify-between items-center">
-                              <div><p className="text-sm font-bold">{h.service_name}</p><p className="text-xs text-zinc-500">{new Date(h.start_time).toLocaleDateString('pt-BR')}</p></div>
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${ h.status === 'COMPLETED' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600' }`}>{h.status === 'COMPLETED' ? 'OK' : 'X'}</span>
-                            </div>
-                          ))}
-                          {selectedClientHistory.length === 0 && <p className="text-sm text-zinc-400 text-center py-4">Primeiro atendimento.</p>}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (<div className="h-full flex flex-col items-center justify-center text-center text-zinc-400 py-12"><Users size={48} className="mb-4 opacity-20" /><p>Selecione um cliente para ver o histórico.</p></div>)}
-                </div>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold">Novo Agendamento</h3>
+                <button onClick={handleCloseModal} className="text-zinc-400 hover:text-zinc-600"><X size={24} /></button>
               </div>
+              
+              <form onSubmit={handleCreateAppointment} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Cliente</label>
+                  <select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.client_id} onChange={e => setFormData({...formData, client_id: e.target.value})}>
+                    <option value="">Selecione um cliente</option>
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+
+                {role !== 'COLLABORATOR' && (
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-700 mb-1">Profissional</label>
+                    <select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.professional_id} onChange={e => setFormData({...formData, professional_id: e.target.value})}>
+                      <option value="">Selecione um profissional</option>
+                      {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Data</label><input required type="date" min={today} className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-2">Serviços</label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto border border-zinc-100 rounded-xl p-2">
+                    {services.map(service => (
+                      <label key={service.id} className="flex items-center gap-2 p-2 hover:bg-zinc-50 rounded-lg cursor-pointer">
+                        <input type="checkbox" checked={formData.service_ids.includes(service.id.toString())} onChange={() => handleServiceToggle(service.id.toString())} className="rounded border-zinc-300 text-black focus:ring-black" />
+                        <span className="text-sm">{service.name} - R${service.price}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Horários Disponíveis</label>
+                  {isLoadingSlots ? (
+                    <div className="text-center p-4 text-zinc-500 flex items-center justify-center gap-2"><Loader size={16} className="animate-spin" /> Carregando horários...</div>
+                  ) : availableSlots.length > 0 ? (
+                    <div className="grid grid-cols-4 gap-2">{availableSlots.map(slot => (<button key={slot} type="button" onClick={() => setFormData({ ...formData, time: slot })} className={`p-2 rounded-lg text-sm font-semibold transition-colors ${formData.time === slot ? 'bg-black text-white' : 'bg-zinc-100 hover:bg-zinc-200'}`}>{slot}</button>))}</div>
+                  ) : (
+                    <div className="text-center p-4 text-zinc-500 text-sm bg-zinc-50 rounded-lg">
+                      {formData.date && formData.professional_id && totalDuration > 0
+                        ? 'Nenhum horário disponível para esta data/serviços.'
+                        : 'Selecione um profissional, data e serviços para ver os horários.'}
+                    </div>
+                  )}
+                  <input type="hidden" value={formData.time} required />
+                </div>
+
+                <button type="submit" className="w-full py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-colors mt-4">Agendar</button>
+              </form>
             </motion.div>
           </div>
         )}

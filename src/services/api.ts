@@ -1,4 +1,4 @@
-import { Role, Service, User, Appointment, DashboardStats, Product, Client, CommissionStats, Notification, Store, Expense } from '../types.ts';
+import { Role, Service, User, Appointment, DashboardStats, Product, Client, CommissionStats, Notification, Store, Expense, StaffFinancialStats } from '../types.ts';
 
 type StoreRegistrationData = {
   storeName: string;
@@ -43,7 +43,9 @@ type ClientRegistrationData = {
   name: string;
   phone: string;
   cep: string;
-  password: string;
+  birth_date?: string;
+  password?: string;
+  storeId: number;
 };
 
 type ClientLoginData = {
@@ -51,13 +53,26 @@ type ClientLoginData = {
   password: string;
 };
 
+type WhatsappMessageData = {
+  to: string; // Formato E.164
+  message: string;
+};
+
 type ApiError = {
   error?: string;
 };
 
 const handleApiError = async (res: Response, defaultMessage: string) => {
-  const err: ApiError = await res.json();
-  throw new Error(err.error || defaultMessage);
+  let errorMessage = defaultMessage;
+  try {
+    const err: ApiError = await res.json();
+    errorMessage = err.error || defaultMessage;
+  } catch (jsonError) {
+    // Fallback para respostas que não são JSON
+    const textResponse = await res.text().catch(() => '');
+    errorMessage = textResponse || defaultMessage;
+  }
+  throw new Error(errorMessage);
 };
 
 export const api = {
@@ -130,6 +145,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(service),
     });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao adicionar serviço');
+    }
     return res.json();
   },
   async updateService(id: number, data: Omit<Service, 'id'>): Promise<void> {
@@ -200,8 +218,31 @@ export const api = {
       await handleApiError(res, 'Falha ao excluir profissional');
     }
   },
-  async getClients(): Promise<Client[]> {
-    const res = await fetch(`/api/clients`);
+  async getClients(storeId: number): Promise<(Client & { appointment_count: number })[]> {
+    const res = await fetch(`/api/clients?storeId=${storeId}`);
+    return res.json();
+  },
+  async getInactiveClients(storeId: number): Promise<Client[]> {
+    const res = await fetch(`/api/opportunities/inactive-clients?storeId=${storeId}`);
+    if (!res.ok) await handleApiError(res, 'Falha ao buscar clientes inativos');
+    return res.json();
+  },
+  async getBirthdayClients(storeId: number): Promise<Client[]> {
+    // NOTE: The backend is currently returning random clients for demonstration.
+    // A real implementation would require a birth_date field.
+    const res = await fetch(`/api/opportunities/birthday-clients?storeId=${storeId}`);
+    if (!res.ok) await handleApiError(res, 'Falha ao buscar aniversariantes');
+    return res.json();
+  },
+  async updateClient(id: number, data: Partial<Omit<Client, 'id'>>): Promise<void> {
+    const res = await fetch(`/api/clients/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar cliente');
+    }
     return res.json();
   },
   async getClientHistory(id: number): Promise<Appointment[]> {
@@ -219,11 +260,18 @@ export const api = {
     const res = await fetch(`/api/appointments?storeId=${storeId}`);
     return res.json();
   },
-  async createAppointment(appointment: NewAppointmentData): Promise<{ ids: number[] }> {
+  async getAvailability(professionalId: number, date: string, duration: number, storeId: number): Promise<string[]> {
+    const res = await fetch(`/api/availability?professionalId=${professionalId}&date=${date}&duration=${duration}&storeId=${storeId}`);
+    if (!res.ok) {
+        await handleApiError(res, 'Falha ao buscar horários disponíveis');
+    }
+    return res.json();
+  },
+  async createAppointment(data: NewAppointmentData): Promise<{ ids: number[] }> {
     const res = await fetch('/api/appointments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(appointment),
+      body: JSON.stringify(data),
     });
     if (!res.ok) {
       await handleApiError(res, 'Falha ao criar agendamento');
@@ -231,39 +279,37 @@ export const api = {
     return res.json();
   },
   async updateAppointmentStatus(id: number, status: Appointment['status']): Promise<void> {
-    await fetch(`/api/appointments/${id}/status`, {
+    const res = await fetch(`/api/appointments/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar status');
+    }
+  },
+  async getDashboardStats(storeId: number, period: string, category: string): Promise<DashboardStats> {
+    const res = await fetch(`/api/dashboard/stats?storeId=${storeId}&period=${period}&category=${category}`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar estatísticas');
+    }
+    return res.json();
+  },
+  async getStaffDashboardStats(storeId: number, period: string): Promise<StaffFinancialStats[]> {
+    const res = await fetch(`/api/dashboard/staff-stats?storeId=${storeId}&period=${period}`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar estatísticas dos profissionais');
+    }
+    return res.json();
   },
   async getCommissionStats(userId: number): Promise<CommissionStats> {
     const res = await fetch(`/api/commissions/${userId}`);
-    return res.json();
-  },
-  async getDashboardStats(storeId?: number, period: string = 'monthly', category: string = 'all'): Promise<DashboardStats> {
-    const res = await fetch(`/api/dashboard/stats?storeId=${storeId}&period=${period}&category=${category}`);
-    return res.json();
-  },
-  async getExpenses(storeId: number): Promise<Expense[]> {
-    const res = await fetch(`/api/expenses?storeId=${storeId}`);
     if (!res.ok) {
-      await handleApiError(res, 'Falha ao buscar despesas');
+      await handleApiError(res, 'Falha ao buscar estatísticas de comissão');
     }
     return res.json();
   },
-  async addExpense(data: { description: string, amount: number, storeId: number }): Promise<{ id: number }> {
-    const res = await fetch('/api/expenses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      await handleApiError(res, 'Falha ao adicionar despesa');
-    }
-    return res.json();
-  },
-  async getProducts(storeId?: number): Promise<Product[]> {
+  async getProducts(storeId: number): Promise<Product[]> {
     const res = await fetch(`/api/products?storeId=${storeId}`);
     return res.json();
   },
@@ -273,27 +319,87 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(product),
     });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao adicionar produto');
+    }
     return res.json();
   },
-  async updateProduct(id: number, data: Partial<Product>): Promise<void> {
-    await fetch(`/api/products/${id}`, {
+  async updateProduct(id: number, data: { stock_quantity: number, price: number }): Promise<void> {
+    const res = await fetch(`/api/products/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar produto');
+    }
   },
   async deleteProduct(id: number): Promise<void> {
-    await fetch(`/api/products/${id}`, {
+    const res = await fetch(`/api/products/${id}`, {
       method: 'DELETE',
     });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao excluir produto');
+    }
   },
-  async getSettings(storeId?: number): Promise<Record<string, string>> {
+  async getExpenses(storeId: number): Promise<Expense[]> {
+    const res = await fetch(`/api/expenses?storeId=${storeId}`);
+    return res.json();
+  },
+  async addExpense(expense: Omit<Expense, 'id' | 'date'> & { storeId: number }): Promise<{ id: number }> {
+    const res = await fetch('/api/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(expense),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao adicionar custo');
+    }
+    return res.json();
+  },
+  async uploadImage(imageFile: File): Promise<{ url: string }> {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+
+    const res = await fetch('/api/upload/image', {
+      method: 'POST',
+      body: formData,
+      // Nota: Não defina o cabeçalho Content-Type, o navegador faz isso por você com o boundary correto.
+    });
+
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao enviar imagem.');
+    }
+    return res.json();
+  },
+  async sendWhatsappMessage(data: WhatsappMessageData): Promise<{ success: boolean; message: string }> {
+    const res = await fetch('/api/whatsapp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao enviar mensagem de WhatsApp');
+    }
+    return res.json();
+  },
+  async getWhatsappStatus(): Promise<{ status: string; qrCode: string | null }> {
+    const res = await fetch('/api/whatsapp/status');
+    return res.json();
+  },
+  async logoutWhatsapp(): Promise<void> {
+    const res = await fetch('/api/whatsapp/logout', { method: 'POST' });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao desconectar WhatsApp');
+    }
+  },
+  async getSettings(storeId: number): Promise<Record<string, string>> {
     const res = await fetch(`/api/settings?storeId=${storeId}`);
     return res.json();
   },
   async updateSettings(storeId: number, settings: Record<string, string>): Promise<void> {
     const res = await fetch('/api/settings', {
-      method: 'POST',
+      method: 'POST', // The backend uses POST for upsert
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ storeId, settings }),
     });
@@ -306,9 +412,19 @@ export const api = {
     return res.json();
   },
   async markNotificationRead(id: number): Promise<void> {
-    await fetch(`/api/notifications/${id}/read`, { method: 'PATCH' });
+    const res = await fetch(`/api/notifications/${id}/read`, {
+      method: 'PATCH',
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao marcar notificação como lida');
+    }
   },
   async clearNotifications(userId: number, storeId: number): Promise<void> {
-    await fetch(`/api/notifications/clear?userId=${userId}&storeId=${storeId}`, { method: 'DELETE' });
-  }
+    const res = await fetch(`/api/notifications/clear?userId=${userId}&storeId=${storeId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao limpar notificações');
+    }
+  },
 };

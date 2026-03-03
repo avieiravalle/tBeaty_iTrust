@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { api } from './services/api.ts';
-import { DashboardStats, Service } from './types.ts';
+import { DashboardStats, Service, StaffFinancialStats } from './types.ts';
 import { Card } from './UI.tsx';
-import { DollarSign, TrendingUp, PieChart, Filter } from 'lucide-react';
+import { DollarSign, TrendingUp, PieChart, Filter, Radar, Users as UsersIcon, Gift, Package as PackageIcon, X, Lightbulb } from 'lucide-react';
 import { ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
 
 interface DashboardViewProps {
   storeId: number;
+  onOpportunityClick: (type: 'inactive' | 'birthday') => void;
 }
 
 type Period = 'daily' | 'weekly' | 'monthly';
@@ -25,16 +27,23 @@ const FinancialStatCard = ({ label, value, icon: Icon, color }: { label: string,
   </div>
 );
 
-export const DashboardView = ({ storeId }: DashboardViewProps) => {
+export const DashboardView = ({ storeId, onOpportunityClick }: DashboardViewProps) => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [staffStats, setStaffStats] = useState<StaffFinancialStats[]>([]);
   const [period, setPeriod] = useState<Period>('monthly');
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [isRadarModalOpen, setIsRadarModalOpen] = useState(false);
+  const [activeTipModal, setActiveTipModal] = useState<string | null>(null);
 
   const fetchStats = useCallback(async () => {
     try {
-      const data = await api.getDashboardStats(storeId, period, selectedCategory);
-      setStats(data);
+      const [mainStatsData, staffStatsData] = await Promise.all([
+        api.getDashboardStats(storeId, period, selectedCategory),
+        api.getStaffDashboardStats(storeId, period)
+      ]);
+      setStats(mainStatsData);
+      setStaffStats(staffStatsData);
     } catch (error) {
       console.error("Failed to fetch dashboard stats:", error);
     }
@@ -90,6 +99,13 @@ export const DashboardView = ({ storeId }: DashboardViewProps) => {
           <p className="text-sm text-zinc-500">Análise do período: {periodLabels[period]}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setIsRadarModalOpen(true)}
+            className="flex items-center gap-2 bg-amber-400/20 text-amber-700 px-4 py-2 rounded-xl hover:bg-amber-400/40 transition-colors border border-amber-400/30"
+          >
+            <Radar size={16} />
+            <span className="text-xs font-bold">Radar de Oportunidades</span>
+          </button>
           <div className="flex bg-stone-200/70 p-1 rounded-xl">
             {(['daily', 'weekly', 'monthly'] as Period[]).map(p => (
               <button key={p} onClick={() => setPeriod(p)} className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${period === p ? 'bg-white shadow-sm text-black' : 'text-zinc-500'}`}>
@@ -146,6 +162,120 @@ export const DashboardView = ({ storeId }: DashboardViewProps) => {
           </div>
         </Card>
       </div>
+
+      <Card className="bg-stone-50/50 border-stone-200/50 p-0">
+        <div className="p-6 border-b border-zinc-100">
+          <h3 className="font-bold flex items-center gap-2"><UsersIcon size={16} className="text-blue-700" /> Desempenho dos Profissionais</h3>
+          <p className="text-xs text-zinc-400">Faturamento e comissões por profissional no período.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="text-xs text-zinc-500 uppercase bg-zinc-50/50">
+              <tr>
+                <th scope="col" className="px-6 py-3">Profissional</th>
+                <th scope="col" className="px-6 py-3 text-right">Faturamento Gerado</th>
+                <th scope="col" className="px-6 py-3 text-right">Comissão Estimada</th>
+              </tr>
+            </thead>
+            <tbody>
+              {staffStats.length === 0 ? (
+                <tr><td colSpan={3} className="text-center p-8 text-zinc-400">Nenhum dado de profissional para o período.</td></tr>
+              ) : (
+                staffStats.map(staff => (
+                  <tr key={staff.id} className="bg-white border-b last:border-0">
+                    <th scope="row" className="px-6 py-4 font-bold text-zinc-900">{staff.name}</th>
+                    <td className="px-6 py-4 text-zinc-600 text-right font-semibold">{formatCurrency(staff.totalRevenue || 0)}</td>
+                    <td className="px-6 py-4 text-zinc-600 text-right">{formatCurrency(staff.totalCommission || 0)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <AnimatePresence>
+        {isRadarModalOpen && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-8 relative"
+            >
+              <button onClick={() => setIsRadarModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600"><X size={24} /></button>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-amber-100 text-amber-600 rounded-lg"><Radar size={20} /></div>
+                <h3 className="text-xl font-bold">Radar de Oportunidades</h3>
+              </div>
+              <p className="text-zinc-500 mb-8">Descubra insights e ideias para impulsionar seu negócio com as Dicas Itrust.</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Card onClick={() => onOpportunityClick('inactive')} className="p-4 text-center cursor-pointer hover:bg-zinc-50 transition-colors">
+                  <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center mx-auto mb-3"><Users size={24} /></div>
+                  <h5 className="font-bold text-sm">Clientes Inativos</h5>
+                  <p className="text-xs text-zinc-500 mt-1">Reative clientes que não agendam há um tempo.</p>
+                </Card>
+                <Card onClick={() => onOpportunityClick('birthday')} className="p-4 text-center cursor-pointer hover:bg-zinc-50 transition-colors">
+                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-lg flex items-center justify-center mx-auto mb-3"><Gift size={24} /></div>
+                  <h5 className="font-bold text-sm">Aniversariantes</h5>
+                  <p className="text-xs text-zinc-500 mt-1">Ofereça um mimo para aniversariantes do mês.</p>
+                </Card>
+                <Card onClick={() => setActiveTipModal('combo')} className="p-4 text-center cursor-pointer hover:bg-zinc-50 transition-colors">
+                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center mx-auto mb-3"><PackageIcon size={24} /></div>
+                  <h5 className="font-bold text-sm">Combos de Serviços</h5>
+                  <p className="text-xs text-zinc-500 mt-1">Crie pacotes para aumentar o ticket médio.</p>
+                </Card>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeTipModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="bg-zinc-50 rounded-2xl shadow-2xl w-full max-w-lg p-8 relative border border-zinc-200"
+            >
+              <button onClick={() => setActiveTipModal(null)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600"><X size={24} /></button>
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-amber-100 text-amber-600 rounded-xl"><Lightbulb size={24} /></div>
+                <div>
+                  <h4 className="text-lg font-bold">
+                    {activeTipModal === 'inactive' && 'Ideia: Campanha para Clientes Inativos'}
+                    {activeTipModal === 'birthday' && 'Ideia: Ação para Aniversariantes'}
+                    {activeTipModal === 'combo' && 'Ideia: Promoção de Combos'}
+                  </h4>
+                  <div className="prose prose-sm text-zinc-600 mt-4">
+                    {activeTipModal === 'inactive' && (
+                      <>
+                        <p>Identifique clientes que não agendam há mais de 3 meses. Envie uma mensagem personalizada via WhatsApp oferecendo <strong>15% de desconto</strong> no próximo serviço.</p>
+                        <p><strong>Exemplo de mensagem:</strong> "Olá [Nome do Cliente], sentimos sua falta! Para celebrar seu retorno, estamos oferecendo 15% de desconto no seu próximo agendamento. Que tal?"</p>
+                      </>
+                    )}
+                    {activeTipModal === 'birthday' && (
+                      <>
+                        <p>No início de cada mês, filtre os clientes que fazem aniversário. Envie uma mensagem carinhosa oferecendo um serviço de baixo custo (ex: hidratação, design de sobrancelha) como presente.</p>
+                        <p><strong>Exemplo de mensagem:</strong> "Feliz aniversário, [Nome do Cliente]! 🎉 Para comemorar seu dia, o tBeauty te presenteia com uma hidratação especial. Válido durante todo o seu mês!"</p>
+                      </>
+                    )}
+                    {activeTipModal === 'combo' && (
+                      <>
+                        <p>Crie pacotes de serviços que se complementam. Por exemplo: "Pé + Mão com 10% de desconto" ou "Corte + Hidratação com preço especial".</p>
+                        <p>Divulgue esses combos nas redes sociais e envie para sua lista de clientes no WhatsApp para incentivar agendamentos de maior valor.</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
