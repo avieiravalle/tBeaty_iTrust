@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Heart, Send, MessageSquare, Copy, Check, Loader, Edit, FileText, QrCode, Plus } from 'lucide-react';
+import { Heart, Send, MessageSquare, Copy, Check, Loader, Edit, FileText, QrCode, Plus, Search } from 'lucide-react';
 import { api } from './services/api.ts';
 import { Client } from './types.ts';
 import { Card } from './UI.tsx';
@@ -18,6 +18,8 @@ type ClientWithStats = Client & {
 
 export const ClientsView = ({ storeId }: ClientsViewProps) => {
   const [clients, setClients] = useState<ClientWithStats[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filteredClients, setFilteredClients] = useState<ClientWithStats[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [promotionMessage, setPromotionMessage] = useState('Olá! Temos uma promoção especial para você: ');
@@ -37,7 +39,8 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
   const [pixQrCode, setPixQrCode] = useState('');
   const [copiedPix, setCopiedPix] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
-  const [registerFormData, setRegisterFormData] = useState({ name: '', phone: '', cep: '', birth_date: '' });
+  const [registerFormData, setRegisterFormData] = useState({ name: '', email: '', phone: '', cep: '', birth_date: '' });
+  const [registerFormErrors, setRegisterFormErrors] = useState<Record<string, string>>({});
 
   const fetchClients = useCallback(async () => {
     setIsLoading(true);
@@ -67,6 +70,13 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
     fetchClients();
     fetchSettings();
   }, [fetchClients, fetchSettings]);
+
+  useEffect(() => {
+    const results = clients.filter(client =>
+      client.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    setFilteredClients(results);
+  }, [searchTerm, clients]);
 
   const handleOpenModal = (client: ClientWithStats | 'all' | 'selected') => {
     setTargetClient(client);
@@ -113,16 +123,38 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
   };
 
   const handleOpenRegisterModal = () => {
-    setRegisterFormData({ name: '', phone: '', cep: '', birth_date: '' });
+    setRegisterFormData({ name: '', email: '', phone: '', cep: '', birth_date: '' });
+    setRegisterFormErrors({});
     setIsRegisterModalOpen(true);
   };
 
   const handleCloseRegisterModal = () => {
     setIsRegisterModalOpen(false);
+    setRegisterFormErrors({});
   };
 
   const handleRegisterClient = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const errors: Record<string, string> = {};
+    if (!registerFormData.name.trim()) {
+      errors.name = 'Nome é obrigatório.';
+    }
+    if (!registerFormData.phone.trim()) {
+      errors.phone = 'Telefone é obrigatório.';
+    }
+    if (!registerFormData.cep.trim()) {
+      errors.cep = 'CEP é obrigatório.';
+    }
+    if (registerFormData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registerFormData.email)) {
+      errors.email = 'Formato de e-mail inválido.';
+    }
+
+    setRegisterFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      return;
+    }
+
     try {
       await api.registerClient({ ...registerFormData, storeId });
       handleCloseRegisterModal();
@@ -130,7 +162,7 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
       alert('Cliente cadastrado com sucesso!');
     } catch (error: any) {
       console.error("Failed to register client:", error);
-      alert(`Erro ao cadastrar cliente: ${error.message}`);
+      setRegisterFormErrors({ general: error.message });
     }
   };
 
@@ -279,7 +311,7 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.checked) {
-          setSelectedClients(new Set(clients.map(c => c.id)));
+          setSelectedClients(new Set(filteredClients.map(c => c.id)));
       } else {
           setSelectedClients(new Set());
       }
@@ -312,6 +344,17 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
         </div>
       </div>
 
+      <div className="relative">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+        <input
+          type="text"
+          placeholder="Buscar cliente por nome..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          className="w-full pl-11 pr-4 py-3 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none bg-white"
+        />
+      </div>
+
       <Card className="p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
@@ -322,7 +365,8 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
                     type="checkbox" 
                     className="w-4 h-4 text-black bg-gray-100 border-gray-300 rounded focus:ring-black"
                     onChange={handleSelectAll}
-                    checked={clients.length > 0 && selectedClients.size === clients.length}
+                    checked={filteredClients.length > 0 && selectedClients.size === filteredClients.length}
+                    disabled={filteredClients.length === 0}
                   />
                 </th>
                 <th scope="col" className="px-6 py-3">Nome</th>
@@ -334,10 +378,10 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
             <tbody>
               {isLoading ? (
                 <tr><td colSpan={5} className="text-center p-8 text-zinc-400">Carregando...</td></tr>
-              ) : clients.length === 0 ? (
-                <tr><td colSpan={5} className="text-center p-8 text-zinc-400">Nenhum cliente cadastrado.</td></tr>
+              ) : filteredClients.length === 0 ? (
+                <tr><td colSpan={5} className="text-center p-8 text-zinc-400">{searchTerm ? `Nenhum cliente encontrado para "${searchTerm}".` : 'Nenhum cliente cadastrado.'}</td></tr>
               ) : (
-                clients.map(client => (
+                filteredClients.map(client => (
                   <tr key={client.id} className="bg-white border-b last:border-0">
                     <td className="p-4">
                       <input 
@@ -476,11 +520,31 @@ export const ClientsView = ({ storeId }: ClientsViewProps) => {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
               <h3 className="text-xl font-bold mb-6 flex items-center gap-2"><Plus /> Cadastrar Novo Cliente</h3>
-              <form onSubmit={handleRegisterClient} className="space-y-4">
-                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Nome</label><input required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={registerFormData.name} onChange={e => setRegisterFormData({...registerFormData, name: e.target.value})} /></div>
-                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Telefone</label><input required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={registerFormData.phone} onChange={e => setRegisterFormData({...registerFormData, phone: phoneMask(e.target.value)})} /></div>
-                <div><label className="block text-sm font-medium text-zinc-700 mb-1">CEP</label><input required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={registerFormData.cep} onChange={e => setRegisterFormData({...registerFormData, cep: cepMask(e.target.value)})} /></div>
+              <form onSubmit={handleRegisterClient} className="space-y-4" noValidate>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Nome</label>
+                  <input className={`w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-black outline-none ${registerFormErrors.name ? 'border-rose-500' : 'border-zinc-200'}`} value={registerFormData.name} onChange={e => setRegisterFormData({...registerFormData, name: e.target.value})} />
+                  {registerFormErrors.name && <p className="text-rose-500 text-xs mt-1">{registerFormErrors.name}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">E-mail (Opcional)</label>
+                  <input type="email" className={`w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-black outline-none ${registerFormErrors.email ? 'border-rose-500' : 'border-zinc-200'}`} value={registerFormData.email} onChange={e => setRegisterFormData({...registerFormData, email: e.target.value})} />
+                  {registerFormErrors.email && <p className="text-rose-500 text-xs mt-1">{registerFormErrors.email}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Telefone</label>
+                  <input className={`w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-black outline-none ${registerFormErrors.phone ? 'border-rose-500' : 'border-zinc-200'}`} value={registerFormData.phone} onChange={e => setRegisterFormData({...registerFormData, phone: phoneMask(e.target.value)})} />
+                  {registerFormErrors.phone && <p className="text-rose-500 text-xs mt-1">{registerFormErrors.phone}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">CEP</label>
+                  <input className={`w-full px-4 py-2 border rounded-xl focus:ring-2 focus:ring-black outline-none ${registerFormErrors.cep ? 'border-rose-500' : 'border-zinc-200'}`} value={registerFormData.cep} onChange={e => setRegisterFormData({...registerFormData, cep: cepMask(e.target.value)})} />
+                  {registerFormErrors.cep && <p className="text-rose-500 text-xs mt-1">{registerFormErrors.cep}</p>}
+                </div>
                 <div><label className="block text-sm font-medium text-zinc-700 mb-1">Data de Nascimento</label><input type="date" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={registerFormData.birth_date} onChange={e => setRegisterFormData({...registerFormData, birth_date: e.target.value})} /></div>
+                
+                {registerFormErrors.general && <p className="text-rose-500 text-sm text-center bg-rose-50 p-3 rounded-lg">{registerFormErrors.general}</p>}
+
                 <div className="flex gap-3 pt-4">
                   <button type="button" onClick={handleCloseRegisterModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button>
                   <button type="submit" className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors">Cadastrar Cliente</button>

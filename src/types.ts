@@ -10,6 +10,7 @@ export interface User {
   store_code: string;
   break_start_time?: string | null;
   break_end_time?: string | null;
+  status: 'ACTIVE' | 'INACTIVE';
 }
 
 export interface Service {

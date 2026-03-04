@@ -1,19 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Edit, XCircle, Briefcase, Percent, Clock, DollarSign } from 'lucide-react';
+import { Plus, Edit, XCircle, Briefcase, Percent, Clock, DollarSign, UserX, UserCheck } from 'lucide-react';
 import { api } from './services/api.ts';
 import { User, Service } from './types.ts';
 import { Card } from './UI.tsx';
 
 interface StaffViewProps {
   storeId: number;
+  userRole: User['role'];
 }
 
-export const StaffView = ({ storeId }: StaffViewProps) => {
+export const StaffView = ({ storeId, userRole }: StaffViewProps) => {
   const [staff, setStaff] = useState<User[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<User | null>(null);
   const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
   const [commissionEditingStaff, setCommissionEditingStaff] = useState<User | null>(null);
   const [allServices, setAllServices] = useState<Service[]>([]);
   const [serviceCommissions, setServiceCommissions] = useState<Record<string, string>>({});
@@ -28,13 +30,12 @@ export const StaffView = ({ storeId }: StaffViewProps) => {
 
   const fetchStaff = useCallback(async () => {
     try {
-      const data = await api.getStaff(storeId);
-      const servicesData = await api.getServices(storeId);
+      const data = await api.getStaff(storeId, showInactive ? 'all' : 'active');
       setStaff(data);
     } catch (error) {
       console.error("Failed to fetch staff:", error);
     }
-  }, [storeId]);
+  }, [storeId, showInactive]);
 
   useEffect(() => {
     fetchStaff();
@@ -130,19 +131,42 @@ export const StaffView = ({ storeId }: StaffViewProps) => {
     }
   }, [fetchStaff]);
 
+  const handleUpdateStatus = async (userId: number, newStatus: 'ACTIVE' | 'INACTIVE') => {
+      const action = newStatus === 'INACTIVE' ? 'desativar' : 'reativar';
+      const confirmation = window.confirm(`Tem certeza que deseja ${action} este profissional?`);
+      if (confirmation) {
+          try {
+              await api.updateStaffStatus(userId, newStatus);
+              await fetchStaff();
+          } catch (error: any) {
+              alert(`Erro ao ${action} profissional: ${error.message}`);
+          }
+      }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold">Equipe de Profissionais</h2>
-        <button onClick={handleOpenAddModal} className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl hover:bg-zinc-800 transition-colors">
-          <Plus size={18} />
-          <span>Adicionar Profissional</span>
-        </button>
+        {userRole === 'ADMIN' && (
+          <button onClick={handleOpenAddModal} className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl hover:bg-zinc-800 transition-colors">
+            <Plus size={18} />
+            <span>Adicionar Profissional</span>
+          </button>
+        )}
+      </div>
+
+      <div className="flex justify-end">
+        <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-600">
+          <input type="checkbox" checked={showInactive} onChange={() => setShowInactive(prev => !prev)} className="h-4 w-4 text-black border-zinc-300 rounded focus:ring-black" />
+          Mostrar inativos
+        </label>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {staff.map(user => (
-          <Card key={user.id} className="group hover:border-black transition-colors relative">
+          <Card key={user.id} className={`group hover:border-black transition-colors relative ${user.status === 'INACTIVE' ? 'bg-zinc-50 opacity-70' : ''}`}>
+            {user.status === 'INACTIVE' && <span className="absolute top-4 left-4 text-xs font-bold uppercase bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full z-10">Inativo</span>}
             <div className="p-2 bg-zinc-100 rounded-lg group-hover:bg-black group-hover:text-white transition-colors inline-block mb-4"><Briefcase size={20} /></div>
             <h4 className="font-bold text-lg mb-1">{user.name}</h4>
             <p className="text-zinc-500 text-sm truncate">{user.email}</p>
@@ -153,15 +177,28 @@ export const StaffView = ({ storeId }: StaffViewProps) => {
                 )}
             </div>
             <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => handleOpenCommissionModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600" aria-label="Comissões">
+              <button onClick={() => handleOpenCommissionModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600" title="Comissões por Serviço">
                 <DollarSign size={16} />
               </button>
-              <button onClick={() => handleOpenEditModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-black" aria-label="Editar">
+              <button onClick={() => handleOpenEditModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-black" title="Editar">
                 <Edit size={16} />
               </button>
-              <button onClick={() => handleDelete(user.id)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-rose-50 hover:text-rose-600" aria-label="Excluir">
-                <XCircle size={16} />
-              </button>
+              {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+                user.status === 'ACTIVE' ? (
+                    <button onClick={() => handleUpdateStatus(user.id, 'INACTIVE')} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-yellow-50 hover:text-yellow-600" title="Desativar">
+                        <UserX size={16} />
+                    </button>
+                ) : (
+                    <button onClick={() => handleUpdateStatus(user.id, 'ACTIVE')} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600" title="Reativar">
+                        <UserCheck size={16} />
+                    </button>
+                )
+              )}
+              {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+                <button onClick={() => handleDelete(user.id)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-rose-50 hover:text-rose-600" title="Excluir Permanentemente">
+                  <XCircle size={16} />
+                </button>
+              )}
             </div>
           </Card>
         ))}

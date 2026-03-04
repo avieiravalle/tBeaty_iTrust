@@ -99,6 +99,7 @@ export const HelpView = () => {
               <li>Informe o número de WhatsApp que será usado como chave Pix.</li>
               <li>Estabeleça a <strong>Meta Mensal de Faturamento</strong> para o dashboard.</li>
               <li>Configure o <strong>Horário de Abertura e Fechamento</strong> do salão.</li>
+              <li>Ative ou desative o <strong>Agendamento Online</strong>. Se desativado, os clientes serão instruídos a ligar para agendar.</li>
             </ul>
           </li>
           <li><strong>Código da Loja:</strong> Visualize o código para compartilhar com novos colaboradores.</li>

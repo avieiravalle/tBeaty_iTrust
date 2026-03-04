@@ -37,10 +37,10 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
     { id: 'commissions', label: 'Minhas Comissões', icon: DollarSign },
   ];
 
-  const views = user.role === 'MANAGER' ? managerViews : collaboratorViews;
+  const views = user.role === 'COLLABORATOR' ? collaboratorViews : managerViews;
 
   useEffect(() => {
-    setActiveView(user.role === 'MANAGER' ? 'dashboard' : 'appointments');
+    setActiveView(user.role === 'COLLABORATOR' ? 'appointments' : 'dashboard');
   }, [user.role]);
 
   const handleOpportunityClick = (type: 'inactive' | 'birthday') => {
@@ -59,7 +59,7 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
       case 'inventory':
         return <InventoryView storeId={user.store_id} />;
       case 'staff':
-        return <StaffView storeId={user.store_id} />;
+        return <StaffView storeId={user.store_id} userRole={user.role} />;
       case 'settings':
         return <SettingsView storeId={user.store_id} storeCode={user.store_code} />;
       case 'clients':
@@ -71,7 +71,7 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
       case 'opportunities':
         return <OpportunitiesView storeId={user.store_id} initialTab={opportunityType || 'inactive'} />;
       default:
-        return <DashboardView storeId={user.store_id} />;
+        return <DashboardView storeId={user.store_id} onOpportunityClick={handleOpportunityClick} />;
     }
   };
 

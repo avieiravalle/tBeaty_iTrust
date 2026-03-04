@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calendar as CalendarIcon, Clock, User as UserIcon, Plus, X, XCircle, Loader, Building, Star } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, User as UserIcon, Plus, X, XCircle, Loader, Building, Star, Phone } from 'lucide-react';
 import { api } from './services/api.ts';
 import { Appointment, Service, User, Client, Store } from './types.ts';
 import { Card } from './UI.tsx';
@@ -19,6 +19,7 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
   
   // Dados para o modal de agendamento
   const [stores, setStores] = useState<Store[]>([]);
+  const [storeSettings, setStoreSettings] = useState<Record<string, string> | null>(null);
   const [services, setServices] = useState<Service[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
@@ -59,15 +60,25 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
   useEffect(() => {
     if (formData.storeId) {
       const storeId = parseInt(formData.storeId);
-      api.getServices(storeId).then(setServices).catch(e => console.error(e));
-      api.getStaff(storeId).then(setStaff).catch(e => console.error(e));
+      Promise.all([
+        api.getServices(storeId),
+        api.getStaff(storeId),
+        api.getSettings(storeId)
+      ]).then(([servicesData, staffData, settingsData]) => {
+        setServices(servicesData);
+        setStaff(staffData);
+        setStoreSettings(settingsData);
+      }).catch(e => console.error("Failed to fetch store data", e));
     } else {
       setServices([]);
       setStaff([]);
+      setStoreSettings(null);
     }
     // Reseta campos dependentes
     setFormData(prev => ({ ...prev, professional_id: '', service_ids: [], time: '' }));
   }, [formData.storeId]);
+
+  const onlineBookingEnabled = useMemo(() => storeSettings?.allow_online_booking !== 'false', [storeSettings]);
 
   const totalDuration = useMemo(() => {
     return formData.service_ids.reduce((total, id) => {
@@ -245,8 +256,27 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-bold">Novo Agendamento</h3><button onClick={handleCloseModal} className="text-zinc-400 hover:text-zinc-600"><X size={24} /></button></div>
               <form onSubmit={handleCreateAppointment} className="space-y-4">
-                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Salão</label><select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.storeId} onChange={e => setFormData({...formData, storeId: e.target.value})}><option value="">Selecione um salão</option>{stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-                {formData.storeId && (
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">Salão</label>
+                  <select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.storeId} onChange={e => setFormData({...formData, storeId: e.target.value})}>
+                    <option value="">Selecione um salão</option>
+                    {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                {formData.storeId && !onlineBookingEnabled && storeSettings && (
+                  <div className="text-center p-6 bg-amber-50 border border-amber-200 rounded-xl my-4">
+                    <h4 className="font-bold text-amber-800">Agendamento por Telefone</h4>
+                    <p className="text-sm text-amber-700 mt-2">
+                        Este salão não aceita agendamentos online no momento. Por favor, entre em contato para marcar seu horário.
+                    </p>
+                    {storeSettings.whatsapp_number && (
+                        <a href={`tel:${storeSettings.whatsapp_number.replace(/\D/g, '')}`} className="mt-4 inline-flex items-center gap-2 font-bold text-black bg-amber-300 px-4 py-2 rounded-lg">
+                            <Phone size={16} /> Ligar para {storeSettings.whatsapp_number}
+                        </a>
+                    )}
+                  </div>
+                )}
+                {formData.storeId && onlineBookingEnabled && (
                   <>
                     <div><label className="block text-sm font-medium text-zinc-700 mb-1">Profissional</label><select required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.professional_id} onChange={e => setFormData({...formData, professional_id: e.target.value, time: ''})}><option value="">Selecione um profissional</option>{staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
                     <div><label className="block text-sm font-medium text-zinc-700 mb-1">Data</label><input required type="date" min={today} className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value, time: ''})} /></div>
@@ -256,9 +286,9 @@ export const ClientAppointmentsView = ({ client }: ClientAppointmentsViewProps) 
                       {isLoadingSlots ? (<div className="text-center p-4 text-zinc-500 flex items-center justify-center gap-2"><Loader size={16} className="animate-spin" /> Carregando...</div>) : availableSlots.length > 0 ? (<div className="grid grid-cols-4 gap-2">{availableSlots.map(slot => (<button key={slot} type="button" onClick={() => setFormData({ ...formData, time: slot })} className={`p-2 rounded-lg text-sm font-semibold transition-colors ${formData.time === slot ? 'bg-black text-white' : 'bg-zinc-100 hover:bg-zinc-200'}`}>{slot}</button>))}</div>) : (<div className="text-center p-4 text-zinc-500 text-sm bg-zinc-50 rounded-lg">{formData.date && formData.professional_id && totalDuration > 0 ? 'Nenhum horário disponível.' : 'Selecione profissional, data e serviços.'}</div>)}
                       <input type="hidden" value={formData.time} required />
                     </div>
+                    <button type="submit" className="w-full py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-colors mt-4">Agendar</button>
                   </>
                 )}
-                <button type="submit" className="w-full py-3 bg-black text-white rounded-xl font-bold hover:bg-zinc-800 transition-colors mt-4">Agendar</button>
               </form>
             </motion.div>
           </div>

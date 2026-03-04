@@ -208,6 +208,22 @@ export const SettingsView = ({ storeId, storeCode }: SettingsViewProps) => {
                 className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none"
               />
             </div>
+            <div className="flex items-center justify-between p-4 border border-zinc-200 rounded-xl bg-zinc-50/50">
+                <div>
+                    <label htmlFor="allow_online_booking" className="font-medium text-zinc-700">Permitir Agendamento Online</label>
+                    <p className="text-xs text-zinc-500">Permite que clientes agendem horários diretamente pelo portal.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                        type="checkbox"
+                        id="allow_online_booking"
+                        className="sr-only peer"
+                        checked={settings.allow_online_booking !== 'false'} // Default to true if not set
+                        onChange={(e) => handleSettingChange('allow_online_booking', e.target.checked ? 'true' : 'false')}
+                    />
+                    <div className="w-11 h-6 bg-zinc-200 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
+                </label>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label htmlFor="opening_time" className="block text-sm font-medium text-zinc-700 mb-1">Horário de Abertura</label>

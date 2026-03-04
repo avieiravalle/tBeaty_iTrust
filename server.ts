@@ -164,6 +164,7 @@ db.exec(`
     store_id INTEGER,
     break_start_time TEXT,
     break_end_time TEXT,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
     FOREIGN KEY (store_id) REFERENCES stores(id)
   );
 
@@ -397,8 +398,14 @@ async function startServer() {
 
   app.post("/api/auth/register-client", (req, res) => {
     const { name, email, phone, cep, password, storeId, birth_date } = req.body;
-    if (!name || !email || !phone || !cep) {
-      return res.status(400).json({ error: "Nome, email, telefone e CEP são obrigatórios." });
+    // When a manager registers a client, password is not sent and email is optional.
+    // When a client self-registers, password and email are sent.
+    if (!name || !phone || !cep) {
+      return res.status(400).json({ error: "Nome, telefone e CEP são obrigatórios." });
+    }
+    // If a password is provided (client self-registration), then email is also required.
+    if (password && !email) {
+      return res.status(400).json({ error: "E-mail é obrigatório para o auto-cadastro." });
     }
     if (!storeId) {
         return res.status(400).json({ error: "A loja (storeId) é obrigatória para associar o cliente." });
@@ -414,7 +421,7 @@ async function startServer() {
         // If password is not provided (e.g., manager registering a client), generate a random one.
         const finalPassword = password || randomBytes(16).toString('hex');
         const hashedPassword = hashPassword(finalPassword);
-        const result = db.prepare("INSERT INTO clients (name, email, phone, cep, password, birth_date) VALUES (?, ?, ?, ?, ?, ?)")
+        const result = db.prepare("INSERT INTO clients (name, email, phone, cep, password, birth_date) VALUES (?, ?, ?, ?, ?, ?)") // email can be null
           .run(name, email, phone, cep, hashedPassword, birth_date || null);
         const clientId = result.lastInsertRowid;
         // Associate client with the store
@@ -546,8 +553,18 @@ async function startServer() {
 
   app.get("/api/staff", (req, res) => {
     const storeId = req.query.storeId as string;
-    const staff = db.prepare("SELECT * FROM users WHERE role = 'COLLABORATOR' AND store_id = ?").all(storeId);
-    res.json(staff);
+    const statusFilter = req.query.status as string;
+
+    let query = "SELECT id, name, email, role, commission_rate, store_id, break_start_time, break_end_time, status FROM users WHERE role = 'COLLABORATOR' AND store_id = ?";
+    const params: (string | number)[] = [storeId];
+
+    if (statusFilter !== 'all') {
+        query += " AND status = 'ACTIVE'";
+    }
+    query += " ORDER BY name";
+    
+    const staff = db.prepare(query).all(...params);
+    res.json(staff);    
   });
 
   app.post("/api/staff", (req, res) => {
@@ -617,6 +634,36 @@ async function startServer() {
           console.error("Error updating service commissions:", error);
           res.status(500).json({ error: "Failed to update service commissions." });
       }
+  });
+
+  app.patch("/api/staff/:id/status", (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!status || !['ACTIVE', 'INACTIVE'].includes(status)) {
+        return res.status(400).json({ error: "Status inválido. Use 'ACTIVE' ou 'INACTIVE'." });
+    }
+
+    // If deactivating, check for future appointments
+    if (status === 'INACTIVE') {
+        const appointmentCount = db.prepare(
+            "SELECT COUNT(*) as count FROM appointments WHERE professional_id = ? AND status = 'PENDING' AND start_time > CURRENT_TIMESTAMP"
+        ).get(id) as { count: number };
+
+        if (appointmentCount.count > 0) {
+            return res.status(400).json({ error: "Não é possível desativar. O profissional tem agendamentos futuros." });
+        }
+    }
+
+    try {
+        const result = db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, id);
+        if (result.changes === 0) {
+            return res.status(404).json({ error: "Profissional não encontrado." });
+        }
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao atualizar status do profissional." });
+    }
   });
 
   app.patch("/api/staff/:id", (req, res) => {

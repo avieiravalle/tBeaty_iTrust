@@ -176,8 +176,11 @@ export const api = {
       await handleApiError(res, 'Falha ao excluir serviço');
     }
   },
-  async getStaff(storeId?: number): Promise<User[]> {
-    const res = await fetch(`/api/staff?storeId=${storeId}`);
+  async getStaff(storeId?: number, status: 'all' | 'active' = 'active'): Promise<User[]> {
+    const res = await fetch(`/api/staff?storeId=${storeId}&status=${status}`);
+    if (!res.ok) {
+        await handleApiError(res, 'Falha ao buscar profissionais');
+    }
     return res.json();
   },
   async getStaffServiceCommissions(userId: number): Promise<Record<string, number>> {
@@ -216,6 +219,16 @@ export const api = {
     });
     if (!res.ok) {
       await handleApiError(res, 'Falha ao atualizar profissional');
+    }
+  },
+  async updateStaffStatus(id: number, status: 'ACTIVE' | 'INACTIVE'): Promise<void> {
+    const res = await fetch(`/api/staff/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+        await handleApiError(res, 'Falha ao atualizar status do profissional');
     }
   },
   async deleteStaff(id: number): Promise<void> {
