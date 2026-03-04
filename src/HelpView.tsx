@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card } from './UI';
-import { HelpCircle, LayoutDashboard, Calendar, Scissors, Users, Heart, Radar, Settings } from 'lucide-react';
+import { HelpCircle, LayoutDashboard, Calendar, Scissors, Users, Heart, Radar, Settings, KeyRound } from 'lucide-react';
 
 const Section = ({ title, icon: Icon, children }: { title: string, icon: React.ElementType, children: React.ReactNode }) => (
   <Card>
@@ -17,13 +17,13 @@ const Section = ({ title, icon: Icon, children }: { title: string, icon: React.E
 export const HelpView = () => {
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3 mb-8">
-        <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
+      <div className="flex items-center gap-4 mb-8">
+        <div className="p-3 bg-zinc-100 text-black rounded-xl">
           <HelpCircle size={28} />
         </div>
         <div>
           <h2 className="text-2xl font-bold">Manual do Sistema</h2>
-          <p className="text-zinc-500">Encontre aqui todas as informações para usar o Gestão de Beleza.</p>
+          <p className="text-zinc-500">Encontre aqui todas as informações para usar o tBeauty.</p>
         </div>
       </div>
 
@@ -97,6 +97,7 @@ export const HelpView = () => {
             <ul>
               <li>Defina o nome do salão.</li>
               <li>Informe o número de WhatsApp que será usado como chave Pix.</li>
+              <li>Defina o <strong>Percentual de Sinal</strong> a ser cobrado nos agendamentos online (ex: 10%). Use 0 para desativar a cobrança de sinal.</li>
               <li>Estabeleça a <strong>Meta Mensal de Faturamento</strong> para o dashboard.</li>
               <li>Configure o <strong>Horário de Abertura e Fechamento</strong> do salão.</li>
               <li>Ative ou desative o <strong>Agendamento Online</strong>. Se desativado, os clientes serão instruídos a ligar para agendar.</li>
@@ -104,6 +105,20 @@ export const HelpView = () => {
           </li>
           <li><strong>Código da Loja:</strong> Visualize o código para compartilhar com novos colaboradores.</li>
           <li><strong>Integração WhatsApp:</strong> Ative o envio de mensagens automáticas escaneando o QR Code com seu celular.</li>
+        </ul>
+      </Section>
+
+      <Section title="Portal do Cliente" icon={Heart}>
+        <p>O cliente também tem um portal exclusivo para interagir com seu salão.</p>
+        <ul>
+          <li><strong>Meus Agendamentos:</strong> O cliente pode ver seu histórico, cancelar agendamentos futuros e avaliar serviços concluídos.</li>
+          <li><strong>Novo Agendamento:</strong> Permite que o cliente faça um novo agendamento de forma autônoma.
+            <ul>
+              <li>Após confirmar, será solicitado um <strong>sinal</strong> (percentual definido pelo gestor) do valor via Pix para garantir o horário. Este valor fica como crédito para um futuro agendamento em caso de cancelamento.</li>
+            </ul>
+          </li>
+          <li><strong>Salões:</strong> Uma vitrine com todos os salões da rede, onde o cliente pode favoritar seus preferidos para fácil acesso. Os salões favoritados aparecem primeiro na lista.</li>
+          <li><strong>Meus Gastos:</strong> Uma visão financeira pessoal, mostrando o total já gasto em serviços e o valor previsto para agendamentos futuros.</li>
         </ul>
       </Section>
     </div>

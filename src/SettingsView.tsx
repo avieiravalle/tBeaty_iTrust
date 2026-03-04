@@ -208,6 +208,17 @@ export const SettingsView = ({ storeId, storeCode }: SettingsViewProps) => {
                 className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none"
               />
             </div>
+            <div>
+              <label htmlFor="prepayment_percentage" className="block text-sm font-medium text-zinc-700 mb-1">Percentual de Sinal para Agendamento (%)</label>
+              <input
+                id="prepayment_percentage"
+                type="number"
+                value={settings.prepayment_percentage || '10'}
+                onChange={(e) => handleSettingChange('prepayment_percentage', e.target.value)}
+                className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none"
+              />
+              <p className="text-xs text-zinc-500 mt-1">Valor (de 0 a 100) cobrado como sinal no agendamento online. Use 0 para desativar.</p>
+            </div>
             <div className="flex items-center justify-between p-4 border border-zinc-200 rounded-xl bg-zinc-50/50">
                 <div>
                     <label htmlFor="allow_online_booking" className="font-medium text-zinc-700">Permitir Agendamento Online</label>

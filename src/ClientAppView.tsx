@@ -1,19 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './services/api.ts';
 import { Client, Store } from './types.ts';
-import { Building, Calendar, Wallet, LogOut } from 'lucide-react';
+import { Building, Calendar, Wallet, LogOut, Star } from 'lucide-react';
+import { ClientAppointmentsView } from './ClientAppointmentsView.tsx';
 
 interface ClientAppViewProps {
   client: Client;
   onLogout: () => void;
 }
 
-const NearbySalonsView = () => {
+const NearbySalonsView = ({ client, onViewServices }: { client: Client, onViewServices: (storeId: number) => void }) => {
   const [stores, setStores] = useState<Store[]>([]);
 
   useEffect(() => {
-    api.getStores().then(setStores).catch(err => console.error("Failed to fetch stores", err));
-  }, []);
+    // Pass client.id to get favorite status
+    if (client) {
+      api.getStores(client.id).then(setStores).catch(err => console.error("Failed to fetch stores", err));
+    }
+  }, [client]);
 
   return (
     <div>
@@ -23,10 +27,14 @@ const NearbySalonsView = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {stores.map(store => (
-            <div key={store.id} className="bg-white p-6 rounded-2xl border border-zinc-100 shadow-sm hover:shadow-lg transition-shadow">
-              <h3 className="font-bold text-lg">{store.name}</h3>
-              <p className="text-sm text-zinc-400 mb-4">Código: {store.code}</p>
-              <button className="w-full bg-black text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-zinc-800 transition-colors">
+            <div key={store.id} className="bg-white p-6 rounded-2xl border border-zinc-100 shadow-sm hover:shadow-lg transition-shadow flex flex-col">
+              <div className="flex-grow">
+                <div className="flex justify-between items-start mb-4">
+                  <h3 className="font-bold text-lg">{store.name}</h3>
+                  {store.is_favorite === 1 && <Star size={18} className="text-rose-400 fill-current" />}
+                </div>
+              </div>
+              <button onClick={() => onViewServices(store.id)} className="w-full mt-2 bg-rose-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-rose-600 transition-colors">
                 Ver Serviços
               </button>
             </div>
@@ -38,25 +46,34 @@ const NearbySalonsView = () => {
 }
 
 export const ClientAppView = ({ client, onLogout }: ClientAppViewProps) => {
-  const [activeView, setActiveView] = useState('salons');
+  const [activeView, setActiveView] = useState('appointments');
+  const [preselectedStoreId, setPreselectedStoreId] = useState<number | null>(null);
+
+  const handleViewServices = (storeId: number) => {
+    setPreselectedStoreId(storeId);
+    setActiveView('appointments');
+  };
 
   const renderContent = () => {
     switch (activeView) {
       case 'salons':
-        return <NearbySalonsView />;
+        return <NearbySalonsView client={client} onViewServices={handleViewServices} />;
       case 'appointments':
-        return <div className="text-center p-12 text-zinc-400">Meus Agendamentos (Em breve)</div>;
+        return <ClientAppointmentsView 
+                  client={client} 
+                  preselectedStoreId={preselectedStoreId} 
+                  onModalOpened={() => setPreselectedStoreId(null)} />;
       case 'spending':
         return <div className="text-center p-12 text-zinc-400">Meus Gastos (Em breve)</div>;
       default:
-        return <NearbySalonsView />;
+        return <ClientAppointmentsView client={client} />;
     }
   };
 
   const NavItem = ({ id, icon: Icon, label }: { id: string, icon: React.ElementType, label: string }) => (
     <button 
       onClick={() => setActiveView(id)}
-      className={`flex flex-col items-center justify-center gap-1 p-2 rounded-lg w-24 transition-colors ${activeView === id ? 'text-black font-bold' : 'text-zinc-500'}`}
+      className={`flex flex-col items-center justify-center gap-1 p-2 rounded-lg w-24 transition-colors ${activeView === id ? 'text-rose-500 font-bold' : 'text-zinc-500'}`}
     >
       <Icon size={24} strokeWidth={activeView === id ? 2.5 : 2} />
       <span className="text-xs">{label}</span>
@@ -75,7 +92,7 @@ export const ClientAppView = ({ client, onLogout }: ClientAppViewProps) => {
         </button>
       </header>
 
-      <main className="p-4 md:p-8">
+      <main className="p-4 md:p-8 pb-24">
         {renderContent()}
       </main>
 

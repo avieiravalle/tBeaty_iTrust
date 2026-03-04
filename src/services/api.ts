@@ -1,4 +1,4 @@
-import { Role, Service, User, Appointment, DashboardStats, Product, Client, CommissionStats, Notification, Store, Expense, StaffFinancialStats } from '../types.ts';
+import { Role, Service, User, Appointment, DashboardStats, Product, Client, CommissionStats, Notification, Store, Expense, StaffFinancialStats, ClientSpendingStats, AdminDashboardStats } from '../types.ts';
 
 type StoreRegistrationData = {
   storeName: string;
@@ -46,7 +46,7 @@ type ClientRegistrationData = {
   cep: string;
   birth_date?: string;
   password?: string;
-  storeId: number;
+  storeId?: number;
 };
 
 type ClientLoginData = {
@@ -81,6 +81,12 @@ const handleApiError = async (res: Response, defaultMessage: string) => {
     errorMessage = textResponse || defaultMessage;
   }
   throw new Error(errorMessage);
+};
+
+type PlanSelectionResult = {
+  price: number;
+  pixKey: string;
+  storeName: string;
 };
 
 export const api = {
@@ -139,8 +145,44 @@ export const api = {
     }
     return res.json();
   },
-  async getStores(): Promise<Store[]> {
-    const res = await fetch('/api/stores');
+  async requestPasswordReset(email: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch('/api/auth/request-password-reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao solicitar redefinição de senha');
+    }
+    return res.json();
+  },
+  async requestClientPasswordReset(phone: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch('/api/auth/request-client-password-reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    });
+    if (!res.ok) {
+      // Silently fail on the client-side to prevent phone number enumeration
+      // but return a generic success-like object to the UI handler.
+      console.error('Falha ao solicitar redefinição de senha do cliente');
+    }
+    return res.json();
+  },
+  async getStores(clientId?: number): Promise<Store[]> {
+    const url = clientId ? `/api/stores?clientId=${clientId}` : '/api/stores';
+    const res = await fetch(url);
+    return res.json();
+  },
+  async selectPlan(storeId: number, planId: string): Promise<PlanSelectionResult> {
+    const res = await fetch('/api/plans/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storeId, planId }),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Erro ao selecionar o plano');
+    }
     return res.json();
   },
   async getServices(storeId?: number): Promise<Service[]> {
@@ -243,6 +285,14 @@ export const api = {
     const res = await fetch(`/api/clients?storeId=${storeId}`);
     return res.json();
   },
+  async searchClients(query: string): Promise<Client[]> {
+    if (query.length < 2) return Promise.resolve([]);
+    const res = await fetch(`/api/clients/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar clientes');
+    }
+    return res.json();
+  },
   async getInactiveClients(storeId: number): Promise<Client[]> {
     const res = await fetch(`/api/opportunities/inactive-clients?storeId=${storeId}`);
     if (!res.ok) await handleApiError(res, 'Falha ao buscar clientes inativos');
@@ -277,6 +327,13 @@ export const api = {
     }
     return res.json();
   },
+  async getClientSpending(clientId: number): Promise<ClientSpendingStats> {
+    const res = await fetch(`/api/clients/${clientId}/spending`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar dados de gastos');
+    }
+    return res.json();
+  },
   async addReview(data: NewReviewData): Promise<{ id: number }> {
     const res = await fetch('/api/reviews', {
       method: 'POST',
@@ -287,6 +344,24 @@ export const api = {
       await handleApiError(res, 'Falha ao enviar avaliação');
     }
     return res.json();
+  },
+  async addFavoriteStore(clientId: number, storeId: number): Promise<void> {
+    const res = await fetch(`/api/clients/${clientId}/favorites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storeId }),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao favoritar salão');
+    }
+  },
+  async removeFavoriteStore(clientId: number, storeId: number): Promise<void> {
+    const res = await fetch(`/api/clients/${clientId}/favorites/${storeId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao desfavoritar salão');
+    }
   },
   async getAppointments(storeId?: number): Promise<Appointment[]> {
     const res = await fetch(`/api/appointments?storeId=${storeId}`);
@@ -389,6 +464,35 @@ export const api = {
     }
     return res.json();
   },
+  async deleteExpense(id: number): Promise<void> {
+    const res = await fetch(`/api/expenses/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao excluir custo');
+    }
+  },
+  async addCollaboratorExpense(expense: { description: string, amount: number, userId: number, storeId: number }): Promise<{ id: number }> {
+    const res = await fetch('/api/collaborator/expenses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(expense),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao adicionar custo do colaborador');
+    }
+    return res.json();
+  },
+  async deleteCollaboratorExpense(id: number, userId: number): Promise<void> {
+    const res = await fetch(`/api/collaborator/expenses/${id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }), // Pass userId for ownership check
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao excluir custo do colaborador');
+    }
+  },
   async uploadImage(imageFile: File): Promise<{ url: string }> {
     const formData = new FormData();
     formData.append('image', imageFile);
@@ -457,6 +561,47 @@ export const api = {
     });
     if (!res.ok) {
       await handleApiError(res, 'Falha ao limpar notificações');
+    }
+  },
+  async getAdminDashboardStats(): Promise<AdminDashboardStats> {
+    const res = await fetch(`/api/admin/dashboard`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar estatísticas do admin');
+    }
+    return res.json();
+  },
+  async getAdminStores(): Promise<Store[]> {
+    const res = await fetch(`/api/admin/stores`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar lojas');
+    }
+    return res.json();
+  },
+  async updateStoreStatus(storeId: number, status: Store['status']): Promise<void> {
+    const res = await fetch(`/api/admin/stores/${storeId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar status da loja');
+    }
+  },
+  async getAdminSystemSettings(): Promise<Record<string, string>> {
+    const res = await fetch(`/api/admin/settings`);
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao buscar configurações do sistema');
+    }
+    return res.json();
+  },
+  async updateAdminSystemSettings(settings: Record<string, string>): Promise<void> {
+    const res = await fetch('/api/admin/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    });
+    if (!res.ok) {
+      await handleApiError(res, 'Falha ao atualizar configurações do sistema');
     }
   },
 };

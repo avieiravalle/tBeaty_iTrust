@@ -6,17 +6,14 @@ interface SidebarItemProps {
   active: boolean;
   onClick: () => void;
   id: string;
+  className?: string;
 }
 
-export const SidebarItem = ({ icon: Icon, label, active, onClick, id }: SidebarItemProps) => (
+export const SidebarItem = ({ icon: Icon, label, active, onClick, id, className }: SidebarItemProps) => (
   <button
     onClick={onClick}
     id={id}
-    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-      active 
-        ? 'bg-black text-white shadow-lg' 
-        : 'text-zinc-500 hover:bg-zinc-100 hover:text-black'
-    }`}
+    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors duration-200 ${className?.replace('bg-primary-dark', 'bg-black').replace('text-primary-dark', 'text-black')}`}
   >
     <Icon size={20} />
     <span className="font-medium">{label}</span>
@@ -29,7 +26,7 @@ interface CardProps {
 }
 
 export const Card: React.FC<CardProps> = ({ children, className = "" }) => (
-  <div className={`bg-white border border-zinc-100 rounded-2xl shadow-sm p-6 ${className}`}>
+  <div className={`bg-white border border-zinc-200/80 rounded-2xl shadow-sm p-6 ${className}`}>
     {children}
   </div>
 );

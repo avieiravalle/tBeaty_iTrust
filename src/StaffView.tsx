@@ -1,62 +1,58 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Edit, XCircle, Briefcase, Percent, Clock, DollarSign, UserX, UserCheck } from 'lucide-react';
+import { Plus, X, Edit, DollarSign, UserPlus, AlertTriangle, Check } from 'lucide-react';
 import { api } from './services/api.ts';
-import { User, Service } from './types.ts';
+import { User } from './types.ts';
 import { Card } from './UI.tsx';
 
 interface StaffViewProps {
-  storeId: number;
-  userRole: User['role'];
+  user: User;
 }
 
-export const StaffView = ({ storeId, userRole }: StaffViewProps) => {
+export const StaffView = ({ user }: StaffViewProps) => {
   const [staff, setStaff] = useState<User[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<User | null>(null);
-  const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
-  const [showInactive, setShowInactive] = useState(false);
-  const [commissionEditingStaff, setCommissionEditingStaff] = useState<User | null>(null);
-  const [allServices, setAllServices] = useState<Service[]>([]);
-  const [serviceCommissions, setServiceCommissions] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    password: '',
-    commission_rate: '0',
+    commission_rate: '30',
     break_start_time: '',
-    break_end_time: '',
+    break_end_time: ''
   });
 
   const fetchStaff = useCallback(async () => {
     try {
-      const data = await api.getStaff(storeId, showInactive ? 'all' : 'active');
+      const data = await api.getStaff(user.store_id, 'all');
       setStaff(data);
     } catch (error) {
       console.error("Failed to fetch staff:", error);
     }
-  }, [storeId, showInactive]);
+  }, [user.store_id]);
 
   useEffect(() => {
     fetchStaff();
   }, [fetchStaff]);
 
-  const handleOpenAddModal = () => {
-    setEditingStaff(null);
-    setFormData({ name: '', email: '', password: '', commission_rate: '0', break_start_time: '', break_end_time: '' });
-    setIsModalOpen(true);
-  };
-
-  const handleOpenEditModal = (user: User) => {
-    setEditingStaff(user);
-    setFormData({
-      name: user.name,
-      email: user.email,
-      password: '', // Password is not edited here
-      commission_rate: user.commission_rate.toString(),
-      break_start_time: user.break_start_time || '',
-      break_end_time: user.break_end_time || '',
-    });
+  const handleOpenModal = (staffMember: User | null = null) => {
+    setEditingStaff(staffMember);
+    if (staffMember) {
+      setFormData({
+        name: staffMember.name,
+        email: staffMember.email,
+        commission_rate: staffMember.commission_rate.toString(),
+        break_start_time: staffMember.break_start_time || '',
+        break_end_time: staffMember.break_end_time || ''
+      });
+    } else {
+      setFormData({
+        name: '',
+        email: '',
+        commission_rate: '30',
+        break_start_time: '',
+        break_end_time: ''
+      });
+    }
     setIsModalOpen(true);
   };
 
@@ -65,140 +61,102 @@ export const StaffView = ({ storeId, userRole }: StaffViewProps) => {
     setEditingStaff(null);
   };
 
-  const handleOpenCommissionModal = async (user: User) => {
-    setCommissionEditingStaff(user);
-    try {
-      const [servicesData, commissionsData] = await Promise.all([
-        api.getServices(storeId),
-        api.getStaffServiceCommissions(user.id)
-      ]);
-      setAllServices(servicesData);
-      setServiceCommissions(Object.fromEntries(Object.entries(commissionsData).map(([k, v]) => [k, v.toString()])));
-      setIsCommissionModalOpen(true);
-    } catch (error) {
-      alert('Falha ao carregar dados de comissão.');
-    }
-  };
-
-  const handleCloseCommissionModal = () => setIsCommissionModalOpen(false);
-
-  const handleSave = useCallback(async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const dataToSave = {
+      ...formData,
+      commission_rate: parseFloat(formData.commission_rate) || 0,
+      store_id: user.store_id,
+    };
     try {
-      const staffData = {
-        name: formData.name,
-        email: formData.email,
-        commission_rate: parseFloat(formData.commission_rate) || 0,
-        break_start_time: formData.break_start_time || null,
-        break_end_time: formData.break_end_time || null,
-      };
-
       if (editingStaff) {
-        await api.updateStaff(editingStaff.id, staffData);
+        await api.updateStaff(editingStaff.id, dataToSave);
       } else {
-        await api.addStaff({ ...staffData, store_id: storeId });
+        await api.addStaff(dataToSave);
       }
-      
       handleCloseModal();
-      await fetchStaff();
+      fetchStaff();
     } catch (error: any) {
-      console.error("Failed to save staff:", error);
-      alert(`Erro ao salvar profissional: ${error.message}`);
-    }
-  }, [formData, storeId, fetchStaff, editingStaff]);
-
-  const handleSaveCommissions = async () => {
-    if (!commissionEditingStaff) return;
-    try {
-      await api.updateStaffServiceCommissions(commissionEditingStaff.id, serviceCommissions);
-      handleCloseCommissionModal();
-      alert('Comissões atualizadas com sucesso!');
-    } catch (error: any) {
-      console.error("Failed to save commissions:", error);
-      alert(`Erro ao salvar comissões: ${error.message}`);
+      alert(`Erro: ${error.message}`);
     }
   };
 
-  const handleDelete = useCallback(async (userId: number) => {
-    if (window.confirm('Tem certeza que deseja excluir este profissional?')) {
+  const handleStatusToggle = async (staffMember: User) => {
+    const newStatus = staffMember.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    const action = newStatus === 'ACTIVE' ? 'reativar' : 'desativar';
+    if (window.confirm(`Tem certeza que deseja ${action} ${staffMember.name}?`)) {
       try {
-        await api.deleteStaff(userId);
-        await fetchStaff();
+        await api.updateStaffStatus(staffMember.id, newStatus);
+        fetchStaff();
       } catch (error: any) {
-        console.error("Failed to delete staff:", error);
-        alert(`Erro ao excluir profissional: ${error.message}`);
+        alert(`Erro: ${error.message}`);
       }
     }
-  }, [fetchStaff]);
-
-  const handleUpdateStatus = async (userId: number, newStatus: 'ACTIVE' | 'INACTIVE') => {
-      const action = newStatus === 'INACTIVE' ? 'desativar' : 'reativar';
-      const confirmation = window.confirm(`Tem certeza que deseja ${action} este profissional?`);
-      if (confirmation) {
-          try {
-              await api.updateStaffStatus(userId, newStatus);
-              await fetchStaff();
-          } catch (error: any) {
-              alert(`Erro ao ${action} profissional: ${error.message}`);
-          }
-      }
   };
+
+  // --- Plan Limit Logic ---
+  const planLimits: Record<string, number> = {
+    'BASIC': 4,
+    'INTERMEDIATE': 9,
+    'ADVANCED': Infinity
+  };
+
+  const limit = user.store_plan ? planLimits[user.store_plan] : 0;
+  const currentCount = staff.filter(s => s.status === 'ACTIVE').length;
+  const isLimitReached = user.role === 'MANAGER' && currentCount >= limit;
+  const planName = user.store_plan ? user.store_plan.charAt(0) + user.store_plan.slice(1).toLowerCase() : 'N/A';
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Equipe de Profissionais</h2>
-        {userRole === 'ADMIN' && (
-          <button onClick={handleOpenAddModal} className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl hover:bg-zinc-800 transition-colors">
-            <Plus size={18} />
-            <span>Adicionar Profissional</span>
+        <h2 className="text-2xl font-bold">Profissionais</h2>
+        <div className="flex items-center gap-4">
+          {user.role === 'MANAGER' && user.store_plan && (
+            <div className="text-right">
+              <p className="text-sm font-bold">{currentCount} / {limit === Infinity ? 'Ilimitado' : limit} Colaboradores</p>
+              <p className="text-xs text-zinc-500">Plano {planName}</p>
+            </div>
+          )}
+          <button 
+            onClick={() => handleOpenModal()} 
+            disabled={isLimitReached}
+            className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl hover:bg-zinc-800 transition-colors disabled:bg-zinc-400 disabled:cursor-not-allowed"
+            title={isLimitReached ? 'Limite de colaboradores atingido' : 'Adicionar Profissional'}
+          >
+            <UserPlus size={18} />
+            <span>Adicionar</span>
           </button>
-        )}
+        </div>
       </div>
 
-      <div className="flex justify-end">
-        <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-600">
-          <input type="checkbox" checked={showInactive} onChange={() => setShowInactive(prev => !prev)} className="h-4 w-4 text-black border-zinc-300 rounded focus:ring-black" />
-          Mostrar inativos
-        </label>
-      </div>
+      {isLimitReached && (
+        <div className="bg-amber-50 text-amber-800 p-4 rounded-xl text-sm border border-amber-200 flex items-center gap-3">
+          <AlertTriangle className="text-amber-600" />
+          <div>
+            Você atingiu o limite de colaboradores para o seu plano. Para adicionar mais, por favor, <button className="font-bold underline">faça um upgrade</button>.
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {staff.map(user => (
-          <Card key={user.id} className={`group hover:border-black transition-colors relative ${user.status === 'INACTIVE' ? 'bg-zinc-50 opacity-70' : ''}`}>
-            {user.status === 'INACTIVE' && <span className="absolute top-4 left-4 text-xs font-bold uppercase bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full z-10">Inativo</span>}
-            <div className="p-2 bg-zinc-100 rounded-lg group-hover:bg-black group-hover:text-white transition-colors inline-block mb-4"><Briefcase size={20} /></div>
-            <h4 className="font-bold text-lg mb-1">{user.name}</h4>
-            <p className="text-zinc-500 text-sm truncate">{user.email}</p>
-            <div className="mt-2 flex items-center gap-4 text-sm">
-                <p className="text-zinc-500 flex items-center gap-1"><Percent size={14} />{user.commission_rate}%</p>
-                {user.break_start_time && user.break_end_time && (
-                    <p className="text-zinc-500 flex items-center gap-1"><Clock size={14} />{user.break_start_time} - {user.break_end_time}</p>
-                )}
+        {staff.map(staffMember => (
+          <Card key={staffMember.id} className={`transition-opacity ${staffMember.status === 'INACTIVE' ? 'opacity-50' : ''}`}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h4 className="font-bold">{staffMember.name}</h4>
+                <p className="text-xs text-zinc-500">{staffMember.email}</p>
+                <p className="text-xs text-zinc-500">Comissão: {staffMember.commission_rate}%</p>
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${staffMember.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-zinc-200 text-zinc-600'}`}>
+                {staffMember.status === 'ACTIVE' ? 'Ativo' : 'Inativo'}
+              </span>
             </div>
-            <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => handleOpenCommissionModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600" title="Comissões por Serviço">
-                <DollarSign size={16} />
+            <div className="mt-4 pt-4 border-t border-zinc-100 flex items-center justify-end gap-2">
+              <button onClick={() => alert('Função de comissão por serviço em breve!')} className="p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 rounded-lg" title="Comissão por Serviço"><DollarSign size={16} /></button>
+              <button onClick={() => handleOpenModal(staffMember)} className="p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 rounded-lg" title="Editar"><Edit size={16} /></button>
+              <button onClick={() => handleStatusToggle(staffMember)} className={`p-2 rounded-lg ${staffMember.status === 'ACTIVE' ? 'text-rose-500 hover:bg-rose-50' : 'text-emerald-500 hover:bg-emerald-50'}`} title={staffMember.status === 'ACTIVE' ? 'Desativar' : 'Reativar'}>
+                {staffMember.status === 'ACTIVE' ? <X size={16} /> : <Check size={16} />}
               </button>
-              <button onClick={() => handleOpenEditModal(user)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-black" title="Editar">
-                <Edit size={16} />
-              </button>
-              {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
-                user.status === 'ACTIVE' ? (
-                    <button onClick={() => handleUpdateStatus(user.id, 'INACTIVE')} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-yellow-50 hover:text-yellow-600" title="Desativar">
-                        <UserX size={16} />
-                    </button>
-                ) : (
-                    <button onClick={() => handleUpdateStatus(user.id, 'ACTIVE')} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600" title="Reativar">
-                        <UserCheck size={16} />
-                    </button>
-                )
-              )}
-              {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
-                <button onClick={() => handleDelete(user.id)} className="p-2 bg-white/50 backdrop-blur-sm rounded-lg text-zinc-500 hover:bg-rose-50 hover:text-rose-600" title="Excluir Permanentemente">
-                  <XCircle size={16} />
-                </button>
-              )}
             </div>
           </Card>
         ))}
@@ -208,51 +166,18 @@ export const StaffView = ({ storeId, userRole }: StaffViewProps) => {
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
-              <h3 className="text-xl font-bold mb-6">{editingStaff ? 'Editar Profissional' : 'Adicionar Novo Profissional'}</h3>
-              <form onSubmit={handleSave} className="space-y-4">
-                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Nome Completo</label><input required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
+              <h3 className="text-xl font-bold mb-6">{editingStaff ? 'Editar Profissional' : 'Novo Profissional'}</h3>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Nome</label><input required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
                 <div><label className="block text-sm font-medium text-zinc-700 mb-1">E-mail</label><input required type="email" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} /></div>
                 <div><label className="block text-sm font-medium text-zinc-700 mb-1">Comissão Padrão (%)</label><input required type="number" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.commission_rate} onChange={e => setFormData({...formData, commission_rate: e.target.value})} /></div>
-                
-                <div className="pt-2">
-                    <label className="block text-sm font-medium text-zinc-700 mb-1">Horário de Pausa (Almoço)</label>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label htmlFor="break_start_time" className="text-xs text-zinc-500">Início</label>
-                            <input id="break_start_time" type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_start_time} onChange={e => setFormData({...formData, break_start_time: e.target.value})} />
-                        </div>
-                        <div>
-                            <label htmlFor="break_end_time" className="text-xs text-zinc-500">Fim</label>
-                            <input id="break_end_time" type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_end_time} onChange={e => setFormData({...formData, break_end_time: e.target.value})} />
-                        </div>
-                    </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="block text-sm font-medium text-zinc-700 mb-1">Início Pausa</label><input type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_start_time} onChange={e => setFormData({...formData, break_start_time: e.target.value})} /></div>
+                  <div><label className="block text-sm font-medium text-zinc-700 mb-1">Fim Pausa</label><input type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_end_time} onChange={e => setFormData({...formData, break_end_time: e.target.value})} /></div>
                 </div>
-
-                <div className="flex gap-3 pt-4"><button type="button" onClick={handleCloseModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button><button type="submit" className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors">Salvar</button></div>
+                <p className="text-xs text-zinc-400">{editingStaff ? 'A senha não será alterada.' : 'Uma senha segura será gerada e deverá ser redefinida pelo colaborador no primeiro acesso.'}</p>
+                <div className="flex gap-3 pt-4"><button type="button" onClick={handleCloseModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50">Cancelar</button><button type="submit" className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800">Salvar</button></div>
               </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {isCommissionModalOpen && commissionEditingStaff && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8">
-              <h3 className="text-xl font-bold mb-2">Comissões por Serviço</h3>
-              <p className="text-sm text-zinc-500 mb-6">Defina comissões específicas para <strong>{commissionEditingStaff.name}</strong>. Se o campo estiver vazio, a taxa padrão de {commissionEditingStaff.commission_rate}% será usada.</p>
-              <div className="space-y-3 max-h-80 overflow-y-auto pr-2">
-                {allServices.map(service => (
-                  <div key={service.id} className="flex items-center justify-between gap-4 p-3 bg-zinc-50 rounded-xl">
-                    <span className="font-medium text-sm">{service.name}</span>
-                    <div className="relative w-24">
-                      <input type="number" placeholder={commissionEditingStaff.commission_rate.toString()} value={serviceCommissions[service.id] || ''} onChange={(e) => setServiceCommissions(prev => ({ ...prev, [service.id]: e.target.value }))} className="w-full pl-3 pr-6 py-1 border border-zinc-200 rounded-lg text-right focus:ring-2 focus:ring-black outline-none" />
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex gap-3 pt-6"><button type="button" onClick={handleCloseCommissionModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button><button type="button" onClick={handleSaveCommissions} className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors">Salvar Comissões</button></div>
             </motion.div>
           </div>
         )}

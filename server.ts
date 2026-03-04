@@ -12,7 +12,6 @@ import QRCode from 'qrcode';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
-
 // Polyfill for __dirname in ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -122,7 +121,7 @@ function verifyPassword(storedHash: string, suppliedPassword: string): boolean {
 const db = new Database("salon.db");
 
 // --- Database Schema Migration ---
-const LATEST_SCHEMA_VERSION = 10; // Increment this number with each schema change
+const LATEST_SCHEMA_VERSION = 14; // Increment this number with each schema change
 
 const currentVersion = db.pragma('user_version', { simple: true }) as number;
 
@@ -132,16 +131,18 @@ if (currentVersion < LATEST_SCHEMA_VERSION) {
   // In production, you would use a more sophisticated migration strategy.
   db.exec(`
     DROP TABLE IF EXISTS reviews;
-    DROP TABLE IF EXISTS client_stores;
-    DROP TABLE IF EXISTS expenses;
-    DROP TABLE IF EXISTS service_commissions;
-    DROP TABLE IF EXISTS notifications;
-    DROP TABLE IF EXISTS settings;
-    DROP TABLE IF EXISTS products;
     DROP TABLE IF EXISTS appointments;
-    DROP TABLE IF EXISTS clients;
-    DROP TABLE IF EXISTS services;
+    DROP TABLE IF EXISTS client_stores;
+    DROP TABLE IF EXISTS client_favorite_stores;
+    DROP TABLE IF EXISTS service_commissions;
+    DROP TABLE IF EXISTS expenses;
+    DROP TABLE IF EXISTS notifications;
+    DROP TABLE IF EXISTS products;
+    DROP TABLE IF EXISTS settings;
+    DROP TABLE IF EXISTS system_settings;
     DROP TABLE IF EXISTS users;
+    DROP TABLE IF EXISTS services;
+    DROP TABLE IF EXISTS clients;
     DROP TABLE IF EXISTS stores;
   `);
 }
@@ -151,7 +152,9 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS stores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    code TEXT UNIQUE NOT NULL
+    code TEXT UNIQUE NOT NULL,
+    plan TEXT, -- 'BASIC', 'INTERMEDIATE', 'ADVANCED'
+    status TEXT DEFAULT 'PENDING_PAYMENT' -- PENDING_PAYMENT, ACTIVE, INACTIVE
   );
 
   CREATE TABLE IF NOT EXISTS users (
@@ -189,6 +192,14 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS client_stores (
+    client_id INTEGER NOT NULL,
+    store_id INTEGER NOT NULL,
+    PRIMARY KEY (client_id, store_id),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+    FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS client_favorite_stores (
     client_id INTEGER NOT NULL,
     store_id INTEGER NOT NULL,
     PRIMARY KEY (client_id, store_id),
@@ -248,8 +259,10 @@ db.exec(`
     description TEXT NOT NULL,
     amount REAL NOT NULL,
     date DATETIME DEFAULT CURRENT_TIMESTAMP,
-    store_id INTEGER,
-    FOREIGN KEY (store_id) REFERENCES stores(id)
+    store_id INTEGER NOT NULL,
+    user_id INTEGER, -- Can be NULL for store-wide expenses
+    FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS service_commissions (
@@ -273,6 +286,11 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (store_id) REFERENCES stores(id)
   );
+
+  CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
 `);
 
 // Set the new schema version if it was updated
@@ -284,27 +302,28 @@ if (currentVersion < LATEST_SCHEMA_VERSION) {
 // Seed initial data if empty
 const storeCount = db.prepare("SELECT COUNT(*) as count FROM stores").get() as { count: number };
 if (storeCount.count === 0) {
-  const storeResult = db.prepare("INSERT INTO stores (name, code) VALUES (?, ?)").run("tBeauty", "TBTY123");
-  const storeId = storeResult.lastInsertRowid;
+  console.log("Seeding database with initial admin data...");
 
-  db.prepare("INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, ?, ?, ?)").run("Usuário Admin", "admin@glow.com", hashPassword("admin123"), "ADMIN", 0, storeId);
-  db.prepare("INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, ?, ?, ?)").run("Gerente Sarah", "sarah@glow.com", hashPassword("sarah123"), "MANAGER", 10, storeId);
-  db.prepare("INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, ?, ?, ?)").run("Cabeleireiro João", "john@glow.com", hashPassword("john123"), "COLLABORATOR", 30, storeId);
-  db.prepare("INSERT INTO users (name, email, password, role, commission_rate, store_id) VALUES (?, ?, ?, ?, ?, ?)").run("Manicure Maria", "maria@glow.com", hashPassword("maria123"), "COLLABORATOR", 35, storeId);
+  // --- STORES ---
+  // Create a dedicated store for the admin to satisfy the foreign key and login query requirements
+  const store1Result = db.prepare("INSERT INTO stores (name, code, plan, status) VALUES (?, ?, ?, ?)").run("Administração", "ADMIN00", 'ADVANCED', 'ACTIVE');
+  const store1Id = store1Result.lastInsertRowid;
 
-  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Corte de Cabelo", 50, 45, "Cabelo", storeId);
-  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Coloração", 120, 120, "Cabelo", storeId);
-  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Manicure", 30, 30, "Unha", storeId);
-  db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run("Limpeza de Pele", 80, 60, "Estética", storeId);
+  // --- USERS ---
+  // Create the Admin user
+  db.prepare("INSERT INTO users (name, email, password, role, store_id, commission_rate) VALUES (?, ?, ?, ?, ?, ?)").run(
+    "Super Admin", 
+    "avieiravale@gmail.com", 
+    hashPassword("Anderson@46"), 
+    "ADMIN", 
+    store1Id, 
+    0
+  );
 
-  db.prepare("INSERT INTO clients (name, email, phone, cep, password) VALUES (?, ?, ?, ?, ?)").run("Ana Souza", "ana@example.com", "11999999999", "01001000", hashPassword("ana123"));
-  db.prepare("INSERT INTO clients (name, email, phone, cep, password) VALUES (?, ?, ?, ?, ?)").run("Carlos Lima", "carlos@example.com", "11888888888", "04538133", hashPassword("carlos123"));
+  // --- SYSTEM SETTINGS ---
+  db.prepare("INSERT INTO system_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING").run('admin_pix_key', '29556537805');
 
-  db.prepare("INSERT INTO products (name, stock_quantity, price, store_id) VALUES (?, ?, ?, ?)").run("Shampoo Pro", 15, 25, storeId);
-  db.prepare("INSERT INTO products (name, stock_quantity, price, store_id) VALUES (?, ?, ?, ?)").run("Tinta Vermelha", 5, 15, storeId);
-
-  db.prepare("INSERT INTO settings (key, value, store_id) VALUES (?, ?, ?)").run("salon_name", "tBeauty", storeId);
-  db.prepare("INSERT INTO settings (key, value, store_id) VALUES (?, ?, ?)").run("monthly_goal", "10000", storeId);
+  console.log("Initial admin data seeded successfully.");
 }
 
 async function startServer() {
@@ -335,8 +354,8 @@ async function startServer() {
       const transaction = db.transaction(() => {
         const hashedPassword = hashPassword(password);
 
-        const storeResult = db.prepare("INSERT INTO stores (name, code) VALUES (?, ?)").run(storeName, storeCode);
-        const storeId = storeResult.lastInsertRowid;
+        const storeResult = db.prepare("INSERT INTO stores (name, code, status) VALUES (?, ?, 'PENDING_PAYMENT')").run(storeName, storeCode);
+        const storeId = Number(storeResult.lastInsertRowid);
         
         const userResult = db.prepare("INSERT INTO users (name, email, password, role, store_id) VALUES (?, ?, ?, ?, ?)")
           .run(userName, email, hashedPassword, 'MANAGER', storeId);
@@ -344,7 +363,7 @@ async function startServer() {
         // Initial settings
         db.prepare("INSERT INTO settings (key, value, store_id) VALUES (?, ?, ?)").run("salon_name", storeName, storeId);
         
-        return { storeId, userId: userResult.lastInsertRowid, storeCode };
+        return { storeId, userId: Number(userResult.lastInsertRowid), storeCode };
       });
       
       const result = transaction();
@@ -363,15 +382,36 @@ async function startServer() {
     const { storeCode, userName, email, password } = req.body;
     
     try {
-      const store = db.prepare("SELECT id FROM stores WHERE code = ?").get(storeCode) as { id: number };
+      const store = db.prepare("SELECT id, plan FROM stores WHERE code = ?").get(storeCode) as { id: number, plan: string };
       if (!store) return res.status(404).json({ error: "Código da loja inválido" });
       
+      // --- START: Plan Limit Check ---
+      const planLimits: Record<string, number> = {
+        'BASIC': 4,
+        'INTERMEDIATE': 9,
+        'ADVANCED': Infinity
+      };
+
+      const limit = store.plan ? planLimits[store.plan] : 0;
+
+      if (limit === undefined) { // Plan exists but is not in our config
+        return res.status(403).json({ error: "Plano da loja inválido. Não é possível registrar." });
+      }
+
+      if (limit !== Infinity) {
+        const collaboratorCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE store_id = ? AND role = 'COLLABORATOR' AND status = 'ACTIVE'").get(store.id) as { count: number };
+        if (collaboratorCount.count >= limit) {
+          return res.status(403).json({ error: `A loja atingiu o limite de ${limit} colaboradores para o plano atual.` });
+        }
+      }
+      // --- END: Plan Limit Check ---
+
       const hashedPassword = hashPassword(password);
 
       const result = db.prepare("INSERT INTO users (name, email, password, role, store_id, commission_rate) VALUES (?, ?, ?, ?, ?, ?)")
         .run(userName, email, hashedPassword, 'COLLABORATOR', store.id, 30);
       
-      res.json({ userId: result.lastInsertRowid, storeId: store.id });
+      res.json({ userId: Number(result.lastInsertRowid), storeId: store.id });
     } catch (error: any) {
       console.error("Collaborator registration error:", error);
       const errorMessage = process.env.NODE_ENV !== 'production' ? 'Erro ao registrar colaborador.' : error.message;
@@ -384,11 +424,19 @@ async function startServer() {
 
   app.post("/api/auth/login", (req, res) => {
     const { email, password } = req.body;
-    const user = db.prepare("SELECT u.*, s.code as store_code FROM users u JOIN stores s ON u.store_id = s.id WHERE u.email = ?")
+    const user = db.prepare("SELECT u.*, s.code as store_code, s.status as store_status, s.plan as store_plan FROM users u JOIN stores s ON u.store_id = s.id WHERE u.email = ?")
       .get(email) as any;
     
     if (!user || !verifyPassword(user.password, password)) {
       return res.status(401).json({ error: "Credenciais inválidas" });
+    }
+
+    if (user.role !== 'ADMIN' && user.store_status === 'PENDING_PAYMENT') {
+      return res.status(403).json({ error: "Pagamento pendente. Sua conta aguarda aprovação para ser ativada." });
+    }
+
+    if (user.role !== 'ADMIN' && user.store_status === 'INACTIVE') {
+      return res.status(403).json({ error: "Sua loja está inativa. Entre em contato com o suporte." });
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -397,9 +445,9 @@ async function startServer() {
   });
 
   app.post("/api/auth/register-client", (req, res) => {
-    const { name, email, phone, cep, password, storeId, birth_date } = req.body;
-    // When a manager registers a client, password is not sent and email is optional.
-    // When a client self-registers, password and email are sent.
+    const { name, email, phone, cep, password, birth_date, storeId } = req.body;
+    // When a manager registers a client, password is not sent, email is optional, and storeId is provided.
+    // When a client self-registers, password and email are sent, but storeId is not.
     if (!name || !phone || !cep) {
       return res.status(400).json({ error: "Nome, telefone e CEP são obrigatórios." });
     }
@@ -407,32 +455,20 @@ async function startServer() {
     if (password && !email) {
       return res.status(400).json({ error: "E-mail é obrigatório para o auto-cadastro." });
     }
-    if (!storeId) {
-        return res.status(400).json({ error: "A loja (storeId) é obrigatória para associar o cliente." });
-    }
  
-    const storeExists = db.prepare("SELECT id FROM stores WHERE id = ?").get(storeId);
-    if (!storeExists) {
-      // This error is likely due to a stale session after a database reset.
-      return res.status(400).json({ error: "A loja associada à sua sessão não foi encontrada. Por favor, saia e entre novamente no sistema." });
-    }
     try {
-      const transaction = db.transaction(() => {
-        // If password is not provided (e.g., manager registering a client), generate a random one.
-        const finalPassword = password || randomBytes(16).toString('hex');
-        const hashedPassword = hashPassword(finalPassword);
-        const result = db.prepare("INSERT INTO clients (name, email, phone, cep, password, birth_date) VALUES (?, ?, ?, ?, ?, ?)") // email can be null
-          .run(name, email, phone, cep, hashedPassword, birth_date || null);
-        const clientId = result.lastInsertRowid;
-        // Associate client with the store
-        db.prepare("INSERT INTO client_stores (client_id, store_id) VALUES (?, ?)")
-          .run(clientId, storeId);
-        return { id: clientId, name, email, phone, cep, birth_date };
-      });
-      const clientData = transaction();
+      // If password is not provided (e.g., manager registering a client), generate a random one.
+      const finalPassword = password || randomBytes(16).toString('hex');
+      const hashedPassword = hashPassword(finalPassword);
+      const result = db.prepare("INSERT INTO clients (name, email, phone, cep, password, birth_date) VALUES (?, ?, ?, ?, ?, ?)") // email can be null
+        .run(name, email, phone, cep, hashedPassword, birth_date || null);
+      const clientId = Number(result.lastInsertRowid);
+      
+      const clientData = { id: clientId, name, email, phone, cep, birth_date };
       res.status(201).json(clientData);
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        // Client already exists, we can try to find them and associate. For now, just error.
         return res.status(400).json({ error: "Este e-mail ou telefone já está cadastrado." });
       }
       console.error("Client registration error:", error);
@@ -455,9 +491,81 @@ async function startServer() {
     res.json(clientWithoutPassword);
   });
 
+  app.post("/api/plans/select", (req, res) => {
+    const { storeId, planId } = req.body;
+    if (!storeId || !planId) {
+      return res.status(400).json({ error: "ID da loja e do plano são obrigatórios." });
+    }
+
+    const plans: Record<string, { price: number }> = {
+      'BASIC': { price: 49.90 },
+      'INTERMEDIATE': { price: 99.90 },
+      'ADVANCED': { price: 159.90 }
+    };
+
+    const selectedPlan = plans[planId];
+    if (!selectedPlan) {
+      return res.status(404).json({ error: "Plano não encontrado." });
+    }
+
+    try {
+      const store = db.prepare("SELECT name FROM stores WHERE id = ?").get(storeId) as { name: string };
+      if (!store) {
+        return res.status(404).json({ error: "Loja não encontrada." });
+      }
+      db.prepare("UPDATE stores SET plan = ? WHERE id = ?").run(planId, storeId);
+
+      const adminPixKeySetting = db.prepare("SELECT value FROM system_settings WHERE key = 'admin_pix_key'").get() as { value: string | null };
+      const pixKey = adminPixKeySetting?.value || 'pix@itrust.com'; // Fallback
+      res.json({ price: selectedPlan.price, pixKey: pixKey, storeName: store.name });
+    } catch (error) {
+      console.error("Error selecting plan:", error);
+      res.status(500).json({ error: "Erro ao selecionar o plano." });
+    }
+  });
+
+  app.post("/api/auth/request-password-reset", (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "E-mail é obrigatório." });
+    }
+    // In a real app, you would find the user, generate a token, save it, and send an email.
+    // Here, we just log it and return success to prevent email enumeration.
+    console.log(`[INFO] Password reset requested for user with email: ${email}. A real implementation would send an email.`);
+    res.json({ success: true, message: "Se uma conta com este e-mail existir, um link para redefinição de senha foi enviado." });
+  });
+
+  app.post("/api/auth/request-client-password-reset", (req, res) => {
+    const { phone } = req.body;
+    if (!phone) {
+      return res.status(400).json({ error: "Telefone é obrigatório." });
+    }
+    // In a real app, you would find the client, generate a token, and send an SMS/WhatsApp.
+    // We use the raw phone number from the form.
+    const cleanPhone = phone.replace(/\D/g, '');
+    console.log(`[INFO] Password reset requested for client with phone: ${cleanPhone}. A real implementation would send a message.`);
+    res.json({ success: true, message: "Se uma conta com este telefone existir, instruções para redefinir a senha foram enviadas." });
+  });
+
   app.get("/api/stores", (req, res) => {
-    const stores = db.prepare("SELECT id, name, code FROM stores").all();
-    res.json(stores);
+    const clientId = req.query.clientId as string | undefined;
+
+    if (clientId) {
+        const stores = db.prepare(`
+            SELECT 
+                s.id, 
+                s.name, 
+                s.code, 
+                CASE WHEN f.store_id IS NOT NULL THEN 1 ELSE 0 END as is_favorite
+            FROM stores s
+            LEFT JOIN client_favorite_stores f ON s.id = f.store_id AND f.client_id = ?
+            ORDER BY is_favorite DESC, s.name ASC
+        `).all(clientId);
+        res.json(stores);
+    } else {
+        const stores = db.prepare("SELECT id, name, code FROM stores").all();
+        res.json(stores);
+    }
   });
 
   // API Routes
@@ -474,7 +582,7 @@ async function startServer() {
     }
     try {
       const result = db.prepare("INSERT INTO services (name, price, duration_minutes, category, store_id) VALUES (?, ?, ?, ?, ?)").run(name, price, duration_minutes, category, storeId);
-      res.status(201).json({ id: result.lastInsertRowid });
+      res.status(201).json({ id: Number(result.lastInsertRowid) });
     } catch (error) {
       console.error("Error adding service:", error);
       res.status(500).json({ error: "Erro interno ao adicionar serviço." });
@@ -573,13 +681,36 @@ async function startServer() {
       return res.status(400).json({ error: "Nome, email, comissão e ID da loja são obrigatórios." });
     }
     try {
+      // --- START: Plan Limit Check ---
+      const store = db.prepare("SELECT plan FROM stores WHERE id = ?").get(store_id) as { plan: string };
+      if (!store) {
+        return res.status(404).json({ error: "Loja não encontrada." });
+      }
+
+      const planLimits: Record<string, number> = {
+        'BASIC': 4,
+        'INTERMEDIATE': 9,
+        'ADVANCED': Infinity
+      };
+
+      const limit = store.plan ? planLimits[store.plan] : 0;
+
+      if (limit !== Infinity) {
+        const collaboratorCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE store_id = ? AND role = 'COLLABORATOR' AND status = 'ACTIVE'").get(store_id) as { count: number };
+
+        if (collaboratorCount.count >= limit) {
+          return res.status(403).json({ error: `Limite de ${limit} colaboradores para o plano ${store.plan} atingido. Faça um upgrade para adicionar mais.` });
+        }
+      }
+      // --- END: Plan Limit Check ---
+
       // Generate a random password since it's not provided from the frontend
       const randomPassword = randomBytes(16).toString('hex');
       const hashedPassword = hashPassword(randomPassword);
       const result = db.prepare(
         "INSERT INTO users (name, email, password, role, commission_rate, store_id, break_start_time, break_end_time) VALUES (?, ?, ?, 'COLLABORATOR', ?, ?, ?, ?)"
       ).run(name, email, hashedPassword, commission_rate, store_id, break_start_time || null, break_end_time || null);
-      res.status(201).json({ id: result.lastInsertRowid });
+      res.status(201).json({ id: Number(result.lastInsertRowid) });
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return res.status(400).json({ error: "Este e-mail já está em uso." });
@@ -873,9 +1004,16 @@ async function startServer() {
           VALUES (?, ?, ?, ?, ?, ?)
         `).run(client_id, professional_id, service_id, currentStartTime.toISOString(), end_time.toISOString(), storeId);
         
-        createdAppointmentIds.push(result.lastInsertRowid as number);
+        createdAppointmentIds.push(Number(result.lastInsertRowid));
         currentStartTime = end_time;
       }
+
+      // Associate client with the store if not already associated
+      db.prepare(`
+        INSERT INTO client_stores (client_id, store_id) 
+        VALUES (?, ?)
+        ON CONFLICT(client_id, store_id) DO NOTHING
+      `).run(client_id, storeId);
 
       return createdAppointmentIds;
     });
@@ -1003,7 +1141,7 @@ async function startServer() {
 
   app.get("/api/expenses", (req, res) => {
     const storeId = req.query.storeId as string;
-    const expenses = db.prepare("SELECT * FROM expenses WHERE store_id = ? ORDER BY date DESC").all(storeId);
+    const expenses = db.prepare("SELECT * FROM expenses WHERE store_id = ? AND user_id IS NULL ORDER BY date DESC").all(storeId);
     res.json(expenses);
   });
 
@@ -1020,12 +1158,58 @@ async function startServer() {
           // Instructing the user to re-login is the correct course of action.
           return res.status(400).json({ error: "A loja associada não foi encontrada. Por favor, saia e entre novamente no sistema." });
         }
-        const result = db.prepare("INSERT INTO expenses (description, amount, store_id) VALUES (?, ?, ?)").run(description, amount, storeId);
-        res.status(201).json({ id: result.lastInsertRowid });
+        const result = db.prepare("INSERT INTO expenses (description, amount, store_id, user_id) VALUES (?, ?, ?, NULL)").run(description, amount, storeId);
+        res.status(201).json({ id: Number(result.lastInsertRowid) });
       } catch (error) {
         console.error("Error adding expense:", error);
         res.status(500).json({ error: "Erro interno ao adicionar despesa." });
       }
+  });
+
+  app.delete("/api/expenses/:id", (req, res) => {
+    const { id } = req.params;
+    // Optional: could add a check to ensure the user deleting is from the correct store.
+    // This endpoint is for managers deleting store-level expenses.
+    try {
+      const result = db.prepare("DELETE FROM expenses WHERE id = ? AND user_id IS NULL").run(id);
+      if (result.changes === 0) {
+        return res.status(404).json({ error: "Despesa da loja não encontrada." });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting expense:", error);
+      res.status(500).json({ error: "Erro ao excluir despesa." });
+    }
+  });
+
+  app.post("/api/collaborator/expenses", (req, res) => {
+    const { description, amount, userId, storeId } = req.body;
+    if (!description || amount === undefined || !userId || !storeId) {
+        return res.status(400).json({ error: "Descrição, valor, ID do usuário e ID da loja são obrigatórios." });
+    }
+    try {
+        const result = db.prepare("INSERT INTO expenses (description, amount, user_id, store_id) VALUES (?, ?, ?, ?)")
+                         .run(description, parseFloat(amount) || 0, userId, storeId);
+        res.status(201).json({ id: Number(result.lastInsertRowid) });
+    } catch (error) {
+        console.error("Error adding collaborator expense:", error);
+        res.status(500).json({ error: "Erro interno ao adicionar despesa do colaborador." });
+    }
+  });
+
+  app.delete("/api/collaborator/expenses/:id", (req, res) => {
+      const { id } = req.params;
+      const { userId } = req.body; // Sent from frontend to confirm ownership
+      if (!userId) {
+          return res.status(400).json({ error: "ID do usuário é obrigatório para exclusão." });
+      }
+      try {
+          const result = db.prepare("DELETE FROM expenses WHERE id = ? AND user_id = ?").run(id, userId);
+          if (result.changes === 0) { return res.status(404).json({ error: "Despesa não encontrada ou você não tem permissão para excluí-la." }); }
+          res.json({ success: true });
+      } catch (error) {
+          res.status(500).json({ error: "Erro ao excluir despesa do colaborador." });
+    }
   });
 
   app.get("/api/products", (req, res) => {
@@ -1037,7 +1221,7 @@ async function startServer() {
   app.post("/api/products", (req, res) => {
     const { name, stock_quantity, price, storeId } = req.body;
     const result = db.prepare("INSERT INTO products (name, stock_quantity, price, store_id) VALUES (?, ?, ?, ?)").run(name, stock_quantity, price, storeId);
-    res.json({ id: result.lastInsertRowid });
+    res.json({ id: Number(result.lastInsertRowid) });
   });
 
   app.patch("/api/products/:id", (req, res) => {
@@ -1073,6 +1257,22 @@ async function startServer() {
         c.id IN (SELECT client_id FROM client_stores WHERE store_id = ?)
       ORDER BY c.name
     `).all(storeId, storeId, storeId);
+    res.json(clients);
+  });
+
+  app.get("/api/clients/search", (req, res) => {
+    const query = req.query.q as string;
+    // We don't scope by storeId here, allowing managers to find any client
+    // in the system (e.g., one who self-registered) and add them to their store via an appointment.
+    if (!query || query.length < 2) {
+      return res.json([]); // Don't search for very short strings
+    }
+    const cleanQuery = query.replace(/\D/g, ''); // For searching phone numbers
+    const clients = db.prepare(`
+      SELECT id, name, phone, cep FROM clients 
+      WHERE name LIKE ? OR phone LIKE ?
+      LIMIT 10
+    `).all(`%${query}%`, `%${cleanQuery}%`);
     res.json(clients);
   });
 
@@ -1171,6 +1371,76 @@ async function startServer() {
     res.json(appointments);
   });
 
+  app.get("/api/clients/:clientId/spending", (req, res) => {
+    const { clientId } = req.params;
+
+    try {
+      const historicalTotal = db.prepare(`
+        SELECT SUM(s.price) as total
+        FROM appointments a
+        JOIN services s ON a.service_id = s.id
+        WHERE a.client_id = ? AND a.status = 'COMPLETED'
+      `).get(clientId) as { total: number };
+
+      const upcomingTotal = db.prepare(`
+        SELECT SUM(s.price) as total
+        FROM appointments a
+        JOIN services s ON a.service_id = s.id
+        WHERE a.client_id = ? AND a.status = 'PENDING' AND a.start_time > CURRENT_TIMESTAMP
+      `).get(clientId) as { total: number };
+
+      const history = db.prepare(`
+        SELECT s.name as service_name, s.price as service_price, a.start_time
+        FROM appointments a
+        JOIN services s ON a.service_id = s.id
+        WHERE a.client_id = ? AND a.status = 'COMPLETED'
+        ORDER BY a.start_time DESC
+        LIMIT 10
+      `).all(clientId);
+
+      res.json({
+        historicalTotal: historicalTotal.total || 0,
+        upcomingTotal: upcomingTotal.total || 0,
+        history: history,
+      });
+    } catch (error) {
+      console.error("Error fetching client spending:", error);
+      res.status(500).json({ error: "Failed to fetch spending data." });
+    }
+  });
+
+  app.post("/api/clients/:clientId/favorites", (req, res) => {
+    const { clientId } = req.params;
+    const { storeId } = req.body;
+
+    if (!storeId) {
+        return res.status(400).json({ error: "storeId is required." });
+    }
+
+    try {
+        // Usando ON CONFLICT DO NOTHING para evitar erros se já for um favorito
+        db.prepare("INSERT INTO client_favorite_stores (client_id, store_id) VALUES (?, ?) ON CONFLICT(client_id, store_id) DO NOTHING")
+          .run(clientId, storeId);
+        res.status(201).json({ success: true });
+    } catch (error: any) {
+        console.error("Error adding favorite:", error);
+        res.status(500).json({ error: "Failed to add favorite." });
+    }
+  });
+
+  app.delete("/api/clients/:clientId/favorites/:storeId", (req, res) => {
+      const { clientId, storeId } = req.params;
+
+      try {
+          db.prepare("DELETE FROM client_favorite_stores WHERE client_id = ? AND store_id = ?")
+            .run(clientId, storeId);
+          res.json({ success: true });
+      } catch (error) {
+          console.error("Error removing favorite:", error);
+          res.status(500).json({ error: "Failed to remove favorite." });
+      }
+  });
+
   app.get("/api/commissions/:userId", (req, res) => {
     const { userId } = req.params;
     const user = db.prepare("SELECT commission_rate, store_id FROM users WHERE id = ?").get(userId) as { commission_rate: number, store_id: number };
@@ -1181,7 +1451,9 @@ async function startServer() {
     const startOfDay = new Date(now.setHours(0, 0, 0, 0)).toISOString();
     
     const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+    startOfWeek.setDate(diff);
     startOfWeek.setHours(0, 0, 0, 0);
     const startOfWeekStr = startOfWeek.toISOString();
 
@@ -1199,10 +1471,26 @@ async function startServer() {
       return result.total || 0;
     };
 
+    const calculateRevenue = (startDate: string) => {
+        const result = db.prepare(`
+            SELECT SUM(s.price) as total
+            FROM appointments a
+            JOIN services s ON a.service_id = s.id
+            WHERE a.professional_id = ? AND a.status = 'COMPLETED' AND a.start_time >= ? AND a.store_id = ?
+        `).get(userId, startDate, user.store_id) as { total: number };
+        return result.total || 0;
+    };
+
+    const monthlyGoalSetting = db.prepare("SELECT value FROM settings WHERE key = 'monthly_goal' AND store_id = ?").get(user.store_id) as { value: string };
+    const recentExpenses = db.prepare("SELECT * FROM expenses WHERE user_id = ? AND date >= ? ORDER BY date DESC").all(userId, startOfMonth);
+
     res.json({
       daily: calculateCommission(startOfDay),
       weekly: calculateCommission(startOfWeekStr),
       monthly: calculateCommission(startOfMonth),
+      monthly_revenue: calculateRevenue(startOfMonth),
+      monthly_goal: parseFloat(monthlyGoalSetting?.value) || 0,
+      recent_expenses: recentExpenses,
       rate: user.commission_rate
     });
   });
@@ -1326,7 +1614,7 @@ async function startServer() {
         comment || null
       );
 
-      res.status(201).json({ id: result.lastInsertRowid });
+      res.status(201).json({ id: Number(result.lastInsertRowid) });
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         return res.status(400).json({ error: "Este agendamento já foi avaliado." });
@@ -1334,6 +1622,103 @@ async function startServer() {
       console.error("Error adding review:", error);
       res.status(500).json({ error: "Erro ao salvar avaliação." });
     }
+  });
+
+  // --- ADMIN ROUTES ---
+
+  app.get("/api/admin/dashboard", (req, res) => {
+    // TODO: Add auth check for ADMIN role
+    const plans: Record<string, number> = {
+      'BASIC': 49.90,
+      'INTERMEDIATE': 99.90,
+      'ADVANCED': 159.90
+    };
+
+    const planCounts = db.prepare(`
+        SELECT plan, COUNT(id) as count 
+        FROM stores 
+        WHERE status = 'ACTIVE' AND plan IS NOT NULL
+        GROUP BY plan
+    `).all() as { plan: keyof typeof plans, count: number }[];
+
+    const mrr = planCounts.reduce((total, item) => {
+        return total + (plans[item.plan] || 0) * item.count;
+    }, 0);
+
+    const activeStores = db.prepare("SELECT COUNT(id) as count FROM stores WHERE status = 'ACTIVE'").get() as { count: number };
+    const pendingStores = db.prepare("SELECT COUNT(id) as count FROM stores WHERE status = 'PENDING_PAYMENT'").get() as { count: number };
+
+    res.json({
+        mrr: mrr,
+        activeStores: activeStores.count || 0,
+        pendingStores: pendingStores.count || 0,
+    });
+  });
+
+  app.get("/api/admin/stores", (req, res) => {
+      // TODO: Add auth check for ADMIN role
+      const stores = db.prepare(`
+          SELECT 
+              s.*, 
+              u.name as manager_name, 
+              u.email as manager_email 
+          FROM stores s 
+          LEFT JOIN users u ON s.id = u.store_id AND u.role = 'MANAGER'
+          ORDER BY 
+              CASE s.status
+                  WHEN 'PENDING_PAYMENT' THEN 1
+                  WHEN 'ACTIVE' THEN 2
+                  WHEN 'INACTIVE' THEN 3
+                  ELSE 4
+              END,
+              s.name
+      `).all();
+      res.json(stores);
+  });
+
+  app.patch("/api/admin/stores/:id/status", (req, res) => {
+      const { id } = req.params;
+      const { status } = req.body;
+      if (!status || !['ACTIVE', 'INACTIVE', 'PENDING_PAYMENT'].includes(status)) {
+          return res.status(400).json({ error: "Status inválido." });
+      }
+      const result = db.prepare("UPDATE stores SET status = ? WHERE id = ?").run(status, id);
+      if (result.changes === 0) return res.status(404).json({ error: "Loja não encontrada." });
+      res.json({ success: true });
+  });
+
+  app.get("/api/admin/settings", (req, res) => {
+    // TODO: Add auth check for ADMIN role
+    try {
+      const settings = db.prepare("SELECT * FROM system_settings").all();
+      const settingsMap = settings.reduce((acc: any, curr: any) => {
+        acc[curr.key] = curr.value;
+        return acc;
+      }, {});
+      res.json(settingsMap);
+    } catch (error) {
+      console.error("Error fetching system settings:", error);
+      res.status(500).json({ error: "Erro ao buscar configurações do sistema." });
+    }
+  });
+
+  app.post("/api/admin/settings", (req, res) => {
+    // TODO: Add auth check for ADMIN role
+    const { settings } = req.body;
+    if (!settings) {
+      return res.status(400).json({ error: "Nenhuma configuração fornecida." });
+    }
+    const stmt = db.prepare(`
+      INSERT INTO system_settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+    const transaction = db.transaction(() => {
+      for (const key in settings) {
+        stmt.run(key, settings[key]);
+      }
+    });
+    transaction();
+    res.json({ success: true });
   });
 
   // Rota para upload de imagem

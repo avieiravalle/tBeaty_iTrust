@@ -8,6 +8,7 @@ export interface User {
   commission_rate: number;
   store_id: number;
   store_code: string;
+  store_plan?: 'BASIC' | 'INTERMEDIATE' | 'ADVANCED';
   break_start_time?: string | null;
   break_end_time?: string | null;
   status: 'ACTIVE' | 'INACTIVE';
@@ -43,6 +44,11 @@ export interface Store {
   id: number;
   name: string;
   code: string;
+  plan?: 'BASIC' | 'INTERMEDIATE' | 'ADVANCED';
+  status?: 'PENDING_PAYMENT' | 'ACTIVE' | 'INACTIVE';
+  is_favorite?: 0 | 1;
+  manager_name?: string;
+  manager_email?: string;
 }
 
 export interface Client {
@@ -60,6 +66,9 @@ export interface CommissionStats {
   weekly: number;
   monthly: number;
   rate: number;
+  monthly_revenue?: number;
+  monthly_goal?: number;
+  recent_expenses?: Expense[];
 }
 
 export interface Expense {
@@ -67,6 +76,8 @@ export interface Expense {
   description: string;
   amount: number;
   date: string;
+  store_id: number;
+  user_id?: number | null;
 }
 
 export interface Product {
@@ -94,6 +105,12 @@ export interface StaffFinancialStats {
   totalCommission: number;
 }
 
+export interface AdminDashboardStats {
+  mrr: number;
+  activeStores: number;
+  pendingStores: number;
+}
+
 export interface Notification {
   id: number;
   user_id: number | null;
@@ -103,4 +120,14 @@ export interface Notification {
   type: 'APPOINTMENT_REMINDER' | 'SYSTEM' | 'INVENTORY';
   is_read: number;
   created_at: string;
+}
+
+export interface ClientSpendingStats {
+  historicalTotal: number;
+  upcomingTotal: number;
+  history: {
+    service_name: string;
+    service_price: number;
+    start_time: string;
+  }[];
 }

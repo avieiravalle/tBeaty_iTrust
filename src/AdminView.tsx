@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, LogOut, LayoutDashboard, Calendar, Scissors, Package, DollarSign, Users, Settings, Heart, Radar, HelpCircle } from 'lucide-react';
+import { ArrowLeft, LogOut, LayoutDashboard, Calendar, Scissors, Package, DollarSign, Users, Settings, Heart, Radar, HelpCircle, Home, Menu } from 'lucide-react';
 import { AuthView } from './AuthView';
 import { User } from './types';
 import { SidebarItem } from './UI';
@@ -15,10 +15,13 @@ import { ClientsView } from './ClientsView';
 import { HelpView } from './HelpView';
 import { OpportunitiesView } from './OpportunitiesView.tsx';
 import { NotificationCenter } from './NotificationCenter';
+import { CollaboratorDashboardView } from './CollaboratorDashboardView.tsx';
+import { SuperAdminView } from './SuperAdminView.tsx';
 
 const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }) => {
   const [activeView, setActiveView] = useState('dashboard');
-  const [opportunityType, setOpportunityType] = useState<'inactive' | 'birthday' | null>(null);
+  const [opportunityType, setOpportunityType] = useState<'inactive' | 'birthday' | null>(null); // This is now only used by the sidebar link
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const managerViews = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -33,6 +36,7 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
   ];
 
   const collaboratorViews = [
+    { id: 'collaborator-dashboard', label: 'Início', icon: Home },
     { id: 'appointments', label: 'Meus Agendamentos', icon: Calendar },
     { id: 'commissions', label: 'Minhas Comissões', icon: DollarSign },
   ];
@@ -40,18 +44,19 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
   const views = user.role === 'COLLABORATOR' ? collaboratorViews : managerViews;
 
   useEffect(() => {
-    setActiveView(user.role === 'COLLABORATOR' ? 'appointments' : 'dashboard');
+    setActiveView(user.role === 'COLLABORATOR' ? 'collaborator-dashboard' : 'dashboard');
   }, [user.role]);
 
-  const handleOpportunityClick = (type: 'inactive' | 'birthday') => {
-    setOpportunityType(type);
-    setActiveView('opportunities');
-  };
+  if (user.role === 'ADMIN') {
+    return <SuperAdminView user={user} onLogout={onLogout} />;
+  }
 
   const renderActiveView = () => {
     switch (activeView) {
+      case 'collaborator-dashboard':
+        return <CollaboratorDashboardView user={user} onViewAppointments={() => setActiveView('appointments')} />;
       case 'dashboard':
-        return <DashboardView storeId={user.store_id} onOpportunityClick={handleOpportunityClick} />;
+        return <DashboardView storeId={user.store_id} />;
       case 'appointments':
         return <AppointmentsView role={user.role} userId={user.id} storeId={user.store_id} />;
       case 'services':
@@ -59,7 +64,7 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
       case 'inventory':
         return <InventoryView storeId={user.store_id} />;
       case 'staff':
-        return <StaffView storeId={user.store_id} userRole={user.role} />;
+        return <StaffView user={user} />;
       case 'settings':
         return <SettingsView storeId={user.store_id} storeCode={user.store_code} />;
       case 'clients':
@@ -69,22 +74,46 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
       case 'help':
         return <HelpView />;
       case 'opportunities':
+        // When navigating from sidebar, reset opportunityType so the view itself controls its state
+        // or defaults to 'inactive'.
         return <OpportunitiesView storeId={user.store_id} initialTab={opportunityType || 'inactive'} />;
       default:
-        return <DashboardView storeId={user.store_id} onOpportunityClick={handleOpportunityClick} />;
+        return <DashboardView storeId={user.store_id} />;
     }
   };
 
   return (
     <div className="min-h-screen bg-zinc-50 flex">
-      <aside className="w-64 bg-white border-r border-zinc-100 p-4 flex flex-col">
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      <aside className={`fixed lg:static inset-y-0 left-0 z-30 w-64 bg-white border-r border-zinc-100 p-4 flex flex-col transition-transform duration-200 ease-in-out ${
+        isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+      }`}>
         <div className="mb-8">
           <h1 className="text-xl font-bold tracking-tighter">tBeauty</h1>
           <p className="text-xs text-zinc-400">Painel do {user.role === 'MANAGER' ? 'Gestor' : 'Colaborador'}</p>
         </div>
         <nav className="flex-1 space-y-2">
           {views.map(view => (
-            <SidebarItem key={view.id} id={view.id} label={view.label} icon={view.icon} active={activeView === view.id} onClick={() => setActiveView(view.id)} />
+            <SidebarItem 
+              key={view.id} 
+              id={view.id} 
+              label={view.label} 
+              icon={view.icon} 
+              active={activeView === view.id} 
+              onClick={() => { 
+                if (view.id === 'opportunities') setOpportunityType(null); 
+                setActiveView(view.id);
+                setIsSidebarOpen(false); // Close sidebar on mobile after click
+              }} 
+              className={activeView === view.id ? 'bg-black text-white' : 'text-zinc-500 hover:bg-zinc-100 hover:text-black'}
+            />
           ))}
         </nav>
         <div className="mt-auto">
@@ -94,9 +123,17 @@ const AdminDashboard = ({ user, onLogout }: { user: User, onLogout: () => void }
           </button>
         </div>
       </aside>
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white/80 backdrop-blur-lg sticky top-0 z-10 p-4 border-b border-zinc-100 flex justify-between items-center">
-          <div><h2 className="text-lg font-bold">Olá, {user.name.split(' ')[0]}!</h2><p className="text-sm text-zinc-500">Bem-vindo(a) de volta.</p></div>
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-2 -ml-2 rounded-lg hover:bg-zinc-100 lg:hidden text-zinc-500"
+            >
+              <Menu size={24} />
+            </button>
+            <div><h2 className="text-lg font-bold">Olá, {user.name.split(' ')[0]}!</h2><p className="text-sm text-zinc-500">Bem-vindo(a) de volta.</p></div>
+          </div>
           <div className="flex items-center gap-4"><NotificationCenter user={user} /></div>
         </header>
         <main className="flex-1 p-8 overflow-y-auto">{renderActiveView()}</main>

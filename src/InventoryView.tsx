@@ -99,12 +99,24 @@ export const InventoryView = ({ storeId }: InventoryViewProps) => {
     }
   }, [fetchProducts]);
 
+  const handleDeleteExpense = useCallback(async (id: number) => {
+    if (window.confirm('Tem certeza que deseja excluir este custo?')) {
+      try {
+        await api.deleteExpense(id);
+        await fetchExpenses();
+      } catch (error: any) {
+        console.error("Failed to delete expense:", error);
+        alert(`Erro ao excluir custo: ${error.message}`);
+      }
+    }
+  }, [fetchExpenses]);
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold">Estoque e Custos</h2>
         <div className="flex items-center gap-2">
-          <button onClick={() => setIsAddingExpense(true)} className="flex items-center gap-2 bg-zinc-600 text-white px-4 py-2 rounded-xl hover:bg-zinc-700 transition-colors">
+          <button onClick={() => setIsAddingExpense(true)} className="flex items-center gap-2 bg-zinc-500 text-white px-4 py-2 rounded-xl hover:bg-zinc-600 transition-colors">
             <Plus size={18} />
             <span>Custo Extra</span>
           </button>
@@ -141,8 +153,8 @@ export const InventoryView = ({ storeId }: InventoryViewProps) => {
       <div className="mt-10">
         <h3 className="text-xl font-bold mb-4">Custos Extras Recentes</h3>
         <div className="space-y-3">
-          {expenses.slice(0, 5).map(expense => (
-            <Card key={expense.id} className="flex items-center justify-between">
+          {expenses.slice(0, 10).map(expense => (
+            <Card key={expense.id} className="flex items-center justify-between group">
               <div className="flex items-center gap-4">
                 <div className="p-3 rounded-xl bg-zinc-100 text-zinc-600"><FileText size={20} /></div>
                 <div>
@@ -150,7 +162,10 @@ export const InventoryView = ({ storeId }: InventoryViewProps) => {
                   <p className="text-xs text-zinc-400">{new Date(expense.date).toLocaleDateString('pt-BR')}</p>
                 </div>
               </div>
-              <p className="font-bold text-lg text-rose-600">- R$ {expense.amount.toFixed(2)}</p>
+              <div className="flex items-center gap-4">
+                <p className="font-bold text-lg text-rose-600">- R$ {expense.amount.toFixed(2)}</p>
+                <button onClick={() => handleDeleteExpense(expense.id)} className="p-2 text-zinc-400 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100" title="Excluir Custo"><XCircle size={20} /></button>
+              </div>
             </Card>
           ))}
           {expenses.length === 0 && <div className="text-center py-12 text-zinc-400">Nenhum custo extra registrado.</div>}
