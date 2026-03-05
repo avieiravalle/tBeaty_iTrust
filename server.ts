@@ -122,7 +122,7 @@ function verifyPassword(storedHash: string, suppliedPassword: string): boolean {
 const db = new Database("salon.db");
 
 // --- Database Schema Migration ---
-const LATEST_SCHEMA_VERSION = 15; // Increment this number with each schema change
+const LATEST_SCHEMA_VERSION = 16; // Increment this number with each schema change
 
 const currentVersion = db.pragma('user_version', { simple: true }) as number;
 
@@ -170,6 +170,7 @@ db.exec(`
     break_end_time TEXT,
     status TEXT NOT NULL DEFAULT 'ACTIVE',
     monthly_goal REAL DEFAULT 0,
+    session_token TEXT UNIQUE,
     FOREIGN KEY (store_id) REFERENCES stores(id)
   );
 
@@ -328,6 +329,41 @@ if (storeCount.count === 0) {
   console.log("Initial admin data seeded successfully.");
 }
 
+// --- Middleware de Autenticação ---
+const authMiddleware = (req: any, res: any, next: any) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: "Acesso negado. Nenhum token fornecido." });
+  }
+
+  try {
+    // Busca o usuário pelo token de sessão
+    const user = db.prepare("SELECT u.*, s.code as store_code, s.status as store_status, s.plan as store_plan FROM users u JOIN stores s ON u.store_id = s.id WHERE u.session_token = ?").get(token);
+
+    if (!user) {
+      return res.status(401).json({ error: "Token inválido ou sessão expirada." });
+    }
+
+    // Anexa o usuário ao objeto de requisição para uso posterior
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password: _, ...userWithoutPassword } = user;
+    req.user = userWithoutPassword;
+    next();
+  } catch (err) {
+    res.status(400).json({ error: "Token inválido." });
+  }
+};
+
+// --- Middleware de Autorização de Admin ---
+const adminAuthMiddleware = (req: any, res: any, next: any) => {
+  if (!req.user || req.user.role !== 'ADMIN') {
+    return res.status(403).json({ error: "Acesso negado. Requer privilégios de administrador." });
+  }
+  next();
+};
+
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3002", 10);
@@ -484,7 +520,15 @@ async function startServer() {
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password: _, ...userWithoutPassword } = user;
-    res.json(userWithoutPassword);
+
+    // Gera e armazena o novo token de sessão
+    const sessionToken = randomBytes(32).toString('hex');
+    db.prepare("UPDATE users SET session_token = ? WHERE id = ?").run(sessionToken, user.id);
+
+    res.json({
+      ...userWithoutPassword,
+      session_token: sessionToken // Envia o token para o cliente
+    });
   });
 
   app.post("/api/auth/register-client", (req, res) => {
@@ -533,6 +577,18 @@ async function startServer() {
     const { password: _, ...clientWithoutPassword } = client;
     res.json(clientWithoutPassword);
   });
+
+  app.post("/api/auth/logout", authMiddleware, (req: any, res) => {
+    try {
+      // Limpa o token de sessão do usuário no banco de dados
+      db.prepare("UPDATE users SET session_token = NULL WHERE id = ?").run(req.user.id);
+      res.json({ success: true, message: "Logout realizado com sucesso." });
+    } catch (error) {
+      console.error("Logout error:", error);
+      res.status(500).json({ error: "Erro ao realizar logout." });
+    }
+  });
+
 
   app.post("/api/plans/select", (req, res) => {
     const { storeId, planId } = req.body;
@@ -613,14 +669,15 @@ async function startServer() {
   });
 
   // API Routes
-  app.get("/api/services", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/services", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const services = db.prepare("SELECT * FROM services WHERE store_id = ?").all(storeId);
     res.json(services);
   });
 
-  app.post("/api/services", (req, res) => {
-    const { name, price, duration_minutes, category, storeId } = req.body;
+  app.post("/api/services", authMiddleware, (req: any, res) => {
+    const { name, price, duration_minutes, category } = req.body;
+    const storeId = req.user.store_id;
     if (!name || price === undefined || duration_minutes === undefined || !storeId) {
       return res.status(400).json({ error: "Nome, preço, duração e ID da loja são obrigatórios." });
     }
@@ -633,7 +690,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/services/:id", (req, res) => {
+  app.patch("/api/services/:id", authMiddleware, (req, res) => {
     const { id } = req.params;
     const { name, price, duration_minutes, category } = req.body;
 
@@ -661,10 +718,10 @@ async function startServer() {
       return res.status(400).json({ error: "Nenhum campo para atualizar foi fornecido." });
     }
 
-    params.push(id); // for the WHERE clause
+    params.push(id, req.user.store_id); // for the WHERE clause
 
     try {
-      const stmt = `UPDATE services SET ${fields.join(", ")} WHERE id = ?`;
+      const stmt = `UPDATE services SET ${fields.join(", ")} WHERE id = ? AND store_id = ?`;
       const result = db.prepare(stmt).run(...params);
 
       if (result.changes === 0) {
@@ -677,22 +734,22 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/services/:id", (req, res) => {
+  app.delete("/api/services/:id", authMiddleware, (req: any, res) => {
     const { id } = req.params;
 
     try {
       // Check if the service is part of any non-cancelled appointments
       const appointmentCount = db.prepare(`
         SELECT COUNT(*) as count 
-        FROM appointments 
-        WHERE service_id = ? AND status != 'CANCELLED'
-      `).get(id) as { count: number };
+        FROM appointments
+        WHERE service_id = ? AND status != 'CANCELLED' AND store_id = ?
+      `).get(id, req.user.store_id) as { count: number };
 
       if (appointmentCount.count > 0) {
         return res.status(400).json({ error: "Não é possível excluir o serviço, pois ele está associado a agendamentos existentes." });
       }
 
-      const result = db.prepare("DELETE FROM services WHERE id = ?").run(id);
+      const result = db.prepare("DELETE FROM services WHERE id = ? AND store_id = ?").run(id, req.user.store_id);
 
       if (result.changes === 0) {
         return res.status(404).json({ error: "Serviço não encontrado." });
@@ -703,8 +760,8 @@ async function startServer() {
     }
   });
 
-  app.get("/api/staff", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/staff", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const statusFilter = req.query.status as string;
 
     let query = "SELECT id, name, email, role, commission_rate, store_id, break_start_time, break_end_time, status FROM users WHERE role = 'COLLABORATOR' AND store_id = ?";
@@ -719,9 +776,10 @@ async function startServer() {
     res.json(staff);    
   });
 
-  app.post("/api/staff", (req, res) => {
-    const { name, email, commission_rate, store_id, break_start_time, break_end_time } = req.body;
-    if (!name || !email || commission_rate === undefined || !store_id) {
+  app.post("/api/staff", authMiddleware, (req: any, res) => {
+    const { name, email, commission_rate, break_start_time, break_end_time } = req.body;
+    const store_id = req.user.store_id;
+    if (!name || !email || commission_rate === undefined) {
       return res.status(400).json({ error: "Nome, email, comissão e ID da loja são obrigatórios." });
     }
     try {
@@ -764,8 +822,16 @@ async function startServer() {
     }
   });
 
-  app.get("/api/staff/:userId/service-commissions", (req, res) => {
+  app.get("/api/staff/:userId/service-commissions", authMiddleware, (req: any, res) => {
     const { userId } = req.params;
+
+    // Security Check: Ensure the requested user belongs to the manager's store
+    const staffMember = db.prepare("SELECT store_id FROM users WHERE id = ? AND role = 'COLLABORATOR'").get(userId) as { store_id: number };
+
+    if (!staffMember || staffMember.store_id !== req.user.store_id) {
+      return res.status(403).json({ error: "Acesso negado a este profissional." });
+    }
+
     const commissions = db.prepare("SELECT service_id, commission_rate FROM service_commissions WHERE user_id = ?").all(userId);
     const commissionMap = commissions.reduce((acc: any, curr: any) => {
         acc[curr.service_id] = curr.commission_rate;
@@ -774,12 +840,19 @@ async function startServer() {
     res.json(commissionMap);
   });
 
-  app.post("/api/staff/:userId/service-commissions", (req, res) => {
+  app.post("/api/staff/:userId/service-commissions", authMiddleware, (req: any, res) => {
       const { userId } = req.params;
       const { commissions } = req.body; // commissions is an object: { serviceId: rate, ... }
 
       if (!commissions) {
           return res.status(400).json({ error: "Commissions data is required." });
+      }
+
+      // Security Check
+      const staffMember = db.prepare("SELECT store_id FROM users WHERE id = ? AND role = 'COLLABORATOR'").get(userId) as { store_id: number };
+
+      if (!staffMember || staffMember.store_id !== req.user.store_id) {
+        return res.status(403).json({ error: "Acesso negado a este profissional." });
       }
 
       const insertStmt = db.prepare(`
@@ -811,7 +884,7 @@ async function startServer() {
       }
   });
 
-  app.patch("/api/staff/:id/status", (req, res) => {
+  app.patch("/api/staff/:id/status", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
@@ -822,8 +895,8 @@ async function startServer() {
     // If deactivating, check for future appointments
     if (status === 'INACTIVE') {
         const appointmentCount = db.prepare(
-            "SELECT COUNT(*) as count FROM appointments WHERE professional_id = ? AND status = 'PENDING' AND start_time > CURRENT_TIMESTAMP"
-        ).get(id) as { count: number };
+            "SELECT COUNT(*) as count FROM appointments WHERE professional_id = ? AND status = 'PENDING' AND start_time > CURRENT_TIMESTAMP AND store_id = ?"
+        ).get(id, req.user.store_id) as { count: number };
 
         if (appointmentCount.count > 0) {
             return res.status(400).json({ error: "Não é possível desativar. O profissional tem agendamentos futuros." });
@@ -831,7 +904,7 @@ async function startServer() {
     }
 
     try {
-        const result = db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status, id);
+        const result = db.prepare("UPDATE users SET status = ? WHERE id = ? AND store_id = ?").run(status, id, req.user.store_id);
         if (result.changes === 0) {
             return res.status(404).json({ error: "Profissional não encontrado." });
         }
@@ -841,7 +914,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/staff/:id", (req, res) => {
+  app.patch("/api/staff/:id", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     const { name, email, commission_rate, break_start_time, break_end_time, monthly_goal } = req.body;
 
@@ -860,11 +933,11 @@ async function startServer() {
       return res.status(400).json({ error: "Nenhum campo para atualizar foi fornecido." });
     }
 
-    params.push(id);
+    params.push(id, req.user.store_id);
 
     try {
       const result = db.prepare(
-        `UPDATE users SET ${fields.join(", ")} WHERE id = ? AND role = 'COLLABORATOR'`
+        `UPDATE users SET ${fields.join(", ")} WHERE id = ? AND role = 'COLLABORATOR' AND store_id = ?`
       ).run(...params);
 
       if (result.changes === 0) {
@@ -880,19 +953,19 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/staff/:id", (req, res) => {
+  app.delete("/api/staff/:id", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     try {
       // Optional: Check if collaborator has future appointments before deleting
       const appointmentCount = db.prepare(
-        "SELECT COUNT(*) as count FROM appointments WHERE professional_id = ? AND status = 'PENDING' AND start_time > CURRENT_TIMESTAMP"
-      ).get(id) as { count: number };
+        "SELECT COUNT(*) as count FROM appointments WHERE professional_id = ? AND status = 'PENDING' AND start_time > CURRENT_TIMESTAMP AND store_id = ?"
+      ).get(id, req.user.store_id) as { count: number };
 
       if (appointmentCount.count > 0) {
         return res.status(400).json({ error: "Não é possível excluir. O profissional tem agendamentos futuros." });
       }
 
-      const result = db.prepare("DELETE FROM users WHERE id = ? AND role = 'COLLABORATOR'").run(id);
+      const result = db.prepare("DELETE FROM users WHERE id = ? AND role = 'COLLABORATOR' AND store_id = ?").run(id, req.user.store_id);
       if (result.changes === 0) {
         return res.status(404).json({ error: "Profissional não encontrado." });
       }
@@ -902,8 +975,8 @@ async function startServer() {
     }
   });
 
-  app.get("/api/appointments", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/appointments", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const appointments = db.prepare(`
       SELECT a.*, u.name as professional_name, s.name as service_name, s.price as service_price, c.name as client_name
       FROM appointments a
@@ -915,8 +988,9 @@ async function startServer() {
     res.json(appointments);
   });
 
-  app.get("/api/availability", (req, res) => {
-    const { professionalId, date, duration, storeId } = req.query;
+  app.get("/api/availability", authMiddleware, (req: any, res) => {
+    const { professionalId, date, duration } = req.query;
+    const storeId = req.user.store_id;
 
     if (!professionalId || !date || !duration || !storeId) {
         return res.status(400).json({ error: "Profissional, data, duração e ID da loja são obrigatórios." });
@@ -990,9 +1064,9 @@ async function startServer() {
     }
   });
 
-  app.post("/api/appointments", (req, res) => {
-    const { client_id, professional_id, service_ids, start_time, storeId } = req.body;
-
+  app.post("/api/appointments", authMiddleware, (req: any, res) => {
+    const { client_id, professional_id, service_ids, start_time } = req.body;
+    const storeId = req.user.store_id;
     if (!service_ids || !Array.isArray(service_ids) || service_ids.length === 0) {
       return res.status(400).json({ error: "Pelo menos um serviço deve ser selecionado." });
     }
@@ -1073,15 +1147,19 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/appointments/:id/status", (req, res) => {
+  app.patch("/api/appointments/:id/status", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     const { status } = req.body;
-    db.prepare("UPDATE appointments SET status = ? WHERE id = ?").run(status, id);
+    const result = db.prepare("UPDATE appointments SET status = ? WHERE id = ? AND store_id = ?").run(status, id, req.user.store_id);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Agendamento não encontrado ou não pertence à sua loja." });
+    }
     res.json({ success: true });
   });
 
-  app.get("/api/dashboard/stats", (req, res) => {
-    const storeId = req.query.storeId as string | undefined;
+  app.get("/api/dashboard/stats", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const period = (req.query.period as string) || 'monthly';
     const category = req.query.category as string | undefined;
 
@@ -1138,8 +1216,8 @@ async function startServer() {
     });
   });
 
-  app.get("/api/dashboard/staff-stats", (req, res) => {
-    const storeId = req.query.storeId as string | undefined;
+  app.get("/api/dashboard/staff-stats", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const period = (req.query.period as string) || 'monthly';
 
     if (!storeId) {
@@ -1184,14 +1262,15 @@ async function startServer() {
     }
   });
 
-  app.get("/api/expenses", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/expenses", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const expenses = db.prepare("SELECT * FROM expenses WHERE store_id = ? AND user_id IS NULL ORDER BY date DESC").all(storeId);
     res.json(expenses);
   });
 
-  app.post("/api/expenses", (req, res) => {
-      const { description, amount, storeId } = req.body;
+  app.post("/api/expenses", authMiddleware, (req: any, res) => {
+      const { description, amount } = req.body;
+      const storeId = req.user.store_id;
       if (!description || amount === undefined || !storeId) {
           return res.status(400).json({ error: "Descrição, valor (que pode ser zero) e ID da loja são obrigatórios." });
       }
@@ -1211,12 +1290,12 @@ async function startServer() {
       }
   });
 
-  app.delete("/api/expenses/:id", (req, res) => {
+  app.delete("/api/expenses/:id", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     // Optional: could add a check to ensure the user deleting is from the correct store.
     // This endpoint is for managers deleting store-level expenses.
     try {
-      const result = db.prepare("DELETE FROM expenses WHERE id = ? AND user_id IS NULL").run(id);
+      const result = db.prepare("DELETE FROM expenses WHERE id = ? AND user_id IS NULL AND store_id = ?").run(id, req.user.store_id);
       if (result.changes === 0) {
         return res.status(404).json({ error: "Despesa da loja não encontrada." });
       }
@@ -1227,9 +1306,10 @@ async function startServer() {
     }
   });
 
-  app.post("/api/collaborator/expenses", (req, res) => {
-    const { description, amount, userId, storeId } = req.body;
-    if (!description || amount === undefined || !userId || !storeId) {
+  app.post("/api/collaborator/expenses", authMiddleware, (req: any, res) => {
+    const { description, amount } = req.body;
+    const { id: userId, store_id: storeId } = req.user;
+    if (!description || amount === undefined) {
         return res.status(400).json({ error: "Descrição, valor, ID do usuário e ID da loja são obrigatórios." });
     }
     try {
@@ -1242,9 +1322,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/collaborator/expenses/:id", (req, res) => {
+  app.delete("/api/collaborator/expenses/:id", authMiddleware, (req: any, res) => {
       const { id } = req.params;
-      const { userId } = req.body; // Sent from frontend to confirm ownership
+      const userId = req.user.id; // Get user from authenticated session
       if (!userId) {
           return res.status(400).json({ error: "ID do usuário é obrigatório para exclusão." });
       }
@@ -1257,34 +1337,41 @@ async function startServer() {
     }
   });
 
-  app.get("/api/products", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/products", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const products = db.prepare("SELECT * FROM products WHERE store_id = ?").all(storeId);
     res.json(products);
   });
 
-  app.post("/api/products", (req, res) => {
-    const { name, stock_quantity, price, storeId } = req.body;
+  app.post("/api/products", authMiddleware, (req: any, res) => {
+    const { name, stock_quantity, price } = req.body;
+    const storeId = req.user.store_id;
     const result = db.prepare("INSERT INTO products (name, stock_quantity, price, store_id) VALUES (?, ?, ?, ?)").run(name, stock_quantity, price, storeId);
     res.json({ id: Number(result.lastInsertRowid) });
   });
 
-  app.patch("/api/products/:id", (req, res) => {
+  app.patch("/api/products/:id", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     const { stock_quantity, price } = req.body;
-    db.prepare("UPDATE products SET stock_quantity = ?, price = ? WHERE id = ?").run(stock_quantity, price, id);
+    const result = db.prepare("UPDATE products SET stock_quantity = ?, price = ? WHERE id = ? AND store_id = ?").run(stock_quantity, price, id, req.user.store_id);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Produto não encontrado ou não pertence à sua loja." });
+    }
     res.json({ success: true });
   });
 
-  app.delete("/api/products/:id", (req, res) => {
+  app.delete("/api/products/:id", authMiddleware, (req: any, res) => {
     const { id } = req.params;
-    db.prepare("DELETE FROM products WHERE id = ?").run(id);
+    const result = db.prepare("DELETE FROM products WHERE id = ? AND store_id = ?").run(id, req.user.store_id);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Produto não encontrado ou não pertence à sua loja." });
+    }
     res.json({ success: true });
   });
 
-  app.get("/api/clients", (req, res) => {
-    const storeId = req.query.storeId as string;
-    if (!storeId) {
+  app.get("/api/clients", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
+    if (!storeId) { // This check is now somewhat redundant but safe to keep
       return res.status(400).json({ error: "O ID da loja é obrigatório." });
     }
     // Retorna clientes que têm agendamento na loja OU foram associados a ela.
@@ -1305,23 +1392,23 @@ async function startServer() {
     res.json(clients);
   });
 
-  app.get("/api/clients/search", (req, res) => {
+  app.get("/api/clients/search", authMiddleware, (req: any, res) => {
     const query = req.query.q as string;
-    // We don't scope by storeId here, allowing managers to find any client
-    // in the system (e.g., one who self-registered) and add them to their store via an appointment.
     if (!query || query.length < 2) {
       return res.json([]); // Don't search for very short strings
     }
     const cleanQuery = query.replace(/\D/g, ''); // For searching phone numbers
     const clients = db.prepare(`
-      SELECT id, name, phone, cep FROM clients 
-      WHERE name LIKE ? OR phone LIKE ?
+      SELECT c.id, c.name, c.phone, c.cep FROM clients c
+      WHERE 
+        (c.id IN (SELECT client_id FROM client_stores WHERE store_id = ?))
+        AND (c.name LIKE ? OR c.phone LIKE ?)
       LIMIT 10
-    `).all(`%${query}%`, `%${cleanQuery}%`);
+    `).all(req.user.store_id, `%${query}%`, `%${cleanQuery}%`);
     res.json(clients);
   });
 
-  app.patch("/api/clients/:id", (req, res) => {
+  app.patch("/api/clients/:id", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     const { name, phone, cep, birth_date } = req.body;
 
@@ -1339,7 +1426,15 @@ async function startServer() {
     params.push(id);
 
     try {
-      db.prepare(`UPDATE clients SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+      // Security Check: Ensure the client is associated with the manager's store
+      const isClientInStore = db.prepare("SELECT client_id FROM client_stores WHERE client_id = ? AND store_id = ?").get(id, req.user.store_id);
+      if (!isClientInStore) {
+        return res.status(403).json({ error: "Acesso negado. Este cliente não está associado à sua loja." });
+      }
+      const result = db.prepare(`UPDATE clients SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+      if (result.changes === 0) {
+        return res.status(404).json({ error: "Cliente não encontrado." });
+      }
       res.json({ success: true });
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') { return res.status(400).json({ error: "Este número de telefone já está em uso." }); }
@@ -1347,8 +1442,8 @@ async function startServer() {
     }
   });
 
-  app.get("/api/opportunities/inactive-clients", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/opportunities/inactive-clients", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     if (!storeId) {
       return res.status(400).json({ error: "O ID da loja é obrigatório." });
     }
@@ -1365,8 +1460,8 @@ async function startServer() {
     res.json(clients);
   });
 
-  app.get("/api/opportunities/birthday-clients", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/opportunities/birthday-clients", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     if (!storeId) {
       return res.status(400).json({ error: "O ID da loja é obrigatório." });
     }
@@ -1381,16 +1476,16 @@ async function startServer() {
     res.json(clients);
   });
 
-  app.get("/api/clients/:id/history", (req, res) => {
+  app.get("/api/clients/:id/history", authMiddleware, (req: any, res) => {
     const { id } = req.params;
     const history = db.prepare(`
       SELECT a.*, s.name as service_name, s.price as service_price, u.name as professional_name
       FROM appointments a
       JOIN services s ON a.service_id = s.id
       JOIN users u ON a.professional_id = u.id
-      WHERE a.client_id = ?
+      WHERE a.client_id = ? AND a.store_id = ?
       ORDER BY a.start_time DESC
-    `).all(id);
+    `).all(id, req.user.store_id);
     res.json(history);
   });
 
@@ -1504,8 +1599,19 @@ async function startServer() {
       }
   });
 
-  app.get("/api/commissions/:userId", (req, res) => {
+  app.get("/api/commissions/:userId", authMiddleware, (req: any, res) => {
     const { userId } = req.params;
+
+    // Security Check: A user can only see their own commissions, or a manager can see their staff's commissions.
+    if (req.user.role === 'COLLABORATOR' && req.user.id.toString() !== userId) {
+      return res.status(403).json({ error: "Acesso negado." });
+    }
+    if (req.user.role === 'MANAGER') {
+      const staffMember = db.prepare("SELECT store_id FROM users WHERE id = ?").get(userId) as { store_id: number };
+      if (!staffMember || staffMember.store_id !== req.user.store_id) {
+        return res.status(403).json({ error: "Acesso negado a este profissional." });
+      }
+    }
     const user = db.prepare("SELECT commission_rate, store_id, monthly_goal FROM users WHERE id = ?").get(userId) as { commission_rate: number, store_id: number, monthly_goal: number };
     
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -1557,8 +1663,8 @@ async function startServer() {
     });
   });
 
-  app.get("/api/settings", (req, res) => {
-    const storeId = req.query.storeId as string;
+  app.get("/api/settings", authMiddleware, (req: any, res) => {
+    const storeId = req.user.store_id;
     const settings = db.prepare("SELECT * FROM settings WHERE store_id = ?").all(storeId);
     const settingsMap = settings.reduce((acc: any, curr: any) => {
       acc[curr.key] = curr.value;
@@ -1567,8 +1673,9 @@ async function startServer() {
     res.json(settingsMap);
   });
 
-  app.post("/api/settings", (req, res) => {
-    const { storeId, settings } = req.body;
+  app.post("/api/settings", authMiddleware, (req: any, res) => {
+    const { settings } = req.body;
+    const storeId = req.user.store_id;
     if (!storeId || !settings) {
         return res.status(400).json({ error: "storeId and settings are required." });
     }
@@ -1603,7 +1710,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/whatsapp/send", async (req, res) => {
+  app.post("/api/whatsapp/send", authMiddleware, async (req, res) => {
     const { to, message } = req.body;
     if (!to || !message) {
       return res.status(400).json({ error: "Número de destino e mensagem são obrigatórios." });
@@ -1628,11 +1735,11 @@ async function startServer() {
     }
   });
 
-  app.get("/api/whatsapp/status", (req, res) => {
+  app.get("/api/whatsapp/status", authMiddleware, (req, res) => {
     res.json({ status: whatsappStatus, qrCode: whatsappQrCode });
   });
 
-  app.post("/api/whatsapp/logout", async (req, res) => {
+  app.post("/api/whatsapp/logout-wa", authMiddleware, async (req, res) => {
     try {
       await whatsappClient.logout();
       res.json({ success: true });
@@ -1688,8 +1795,7 @@ async function startServer() {
 
   // --- ADMIN ROUTES ---
 
-  app.get("/api/admin/dashboard", (req, res) => {
-    // TODO: Add auth check for ADMIN role
+  app.get("/api/admin/dashboard", authMiddleware, adminAuthMiddleware, (req, res) => {
     const plans: Record<string, number> = {
       'BASIC': 49.90,
       'INTERMEDIATE': 99.90,
@@ -1717,8 +1823,7 @@ async function startServer() {
     });
   });
 
-  app.get("/api/admin/stores", (req, res) => {
-      // TODO: Add auth check for ADMIN role
+  app.get("/api/admin/stores", authMiddleware, adminAuthMiddleware, (req, res) => {
       const stores = db.prepare(`
           SELECT 
               s.*, 
@@ -1739,7 +1844,7 @@ async function startServer() {
       res.json(stores);
   });
 
-  app.patch("/api/admin/stores/:id/status", (req, res) => {
+  app.patch("/api/admin/stores/:id/status", authMiddleware, adminAuthMiddleware, (req, res) => {
       const { id } = req.params;
       const { status } = req.body;
       if (!status || !['ACTIVE', 'INACTIVE', 'PENDING_PAYMENT'].includes(status)) {
@@ -1750,8 +1855,7 @@ async function startServer() {
       res.json({ success: true });
   });
 
-  app.get("/api/admin/settings", (req, res) => {
-    // TODO: Add auth check for ADMIN role
+  app.get("/api/admin/settings", authMiddleware, adminAuthMiddleware, (req, res) => {
     try {
       const settings = db.prepare("SELECT * FROM system_settings").all();
       const settingsMap = settings.reduce((acc: any, curr: any) => {
@@ -1765,8 +1869,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/admin/settings", (req, res) => {
-    // TODO: Add auth check for ADMIN role
+  app.post("/api/admin/settings", authMiddleware, adminAuthMiddleware, (req, res) => {
     const { settings } = req.body;
     if (!settings) {
       return res.status(400).json({ error: "Nenhuma configuração fornecida." });
@@ -1785,7 +1888,7 @@ async function startServer() {
   });
 
   // Rota para upload de imagem
-  app.post("/api/upload/image", (req, res) => {
+  app.post("/api/upload/image", authMiddleware, (req, res) => {
     const handleUpload = upload.single('image');
     handleUpload(req, res, (err) => {
       if (err) {
@@ -1823,9 +1926,9 @@ async function startServer() {
     });
   }
 
-  app.get("/api/notifications", (req, res) => {
-    const userId = req.query.userId as string;
-    const storeId = req.query.storeId as string;
+  app.get("/api/notifications", authMiddleware, (req: any, res) => {
+    const userId = req.user.id;
+    const storeId = req.user.store_id;
     const notifications = db.prepare(`
       SELECT * FROM notifications 
       WHERE (user_id = ? OR user_id IS NULL) AND store_id = ? 
@@ -1835,15 +1938,15 @@ async function startServer() {
     res.json(notifications);
   });
 
-  app.patch("/api/notifications/:id/read", (req, res) => {
+  app.patch("/api/notifications/:id/read", authMiddleware, (req, res) => {
     const { id } = req.params;
     db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ?").run(id);
     res.json({ success: true });
   });
 
-  app.delete("/api/notifications/clear", (req, res) => {
-    const userId = req.query.userId as string;
-    const storeId = req.query.storeId as string;
+  app.delete("/api/notifications/clear", authMiddleware, (req: any, res) => {
+    const userId = req.user.id;
+    const storeId = req.user.store_id;
     db.prepare("DELETE FROM notifications WHERE user_id = ? AND store_id = ?").run(userId, storeId);
     res.json({ success: true });
   });

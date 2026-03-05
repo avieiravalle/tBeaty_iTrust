@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './services/api.ts';
-import { DashboardStats, Service, StaffFinancialStats } from './types.ts';
+import { DashboardStats, Service, StaffFinancialStats, Client } from './types.ts';
 import { Card, StatCard } from './UI.tsx';
-import { DollarSign, TrendingUp, PieChart, Filter, Radar, Users as UsersIcon, Gift, Package as PackageIcon, X, Lightbulb } from 'lucide-react';
-import { OpportunityListModal } from './OpportunityListModal.tsx';
+import { DollarSign, TrendingUp, PieChart, Filter, Radar, Users as UsersIcon, Gift, Package as PackageIcon, X, Lightbulb, Loader, MessageSquare, CheckCircle2, Edit, FileText } from 'lucide-react';
+// import { OpportunityListModal } from './OpportunityListModal.tsx'; // This component is no longer needed here
 import { ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
 
 interface DashboardViewProps {
@@ -13,38 +13,42 @@ interface DashboardViewProps {
 
 type Period = 'daily' | 'weekly' | 'monthly';
 
+type ClientWithStats = Client & {
+  appointment_count?: number;
+  last_appointment?: string;
+  birth_date?: string | null;
+};
+
 export const DashboardView = ({ storeId }: DashboardViewProps) => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [staffStats, setStaffStats] = useState<StaffFinancialStats[]>([]);
   const [period, setPeriod] = useState<Period>('monthly');
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [isRadarModalOpen, setIsRadarModalOpen] = useState(false);
-  const [activeTipModal, setActiveTipModal] = useState<string | null>(null);
-  const [listModalType, setListModalType] = useState<'inactive' | 'birthday' | null>(null);
+  const [isOpportunitiesModalOpen, setIsOpportunitiesModalOpen] = useState(false);
 
   const fetchStats = useCallback(async () => {
     try {
       const [mainStatsData, staffStatsData] = await Promise.all([
-        api.getDashboardStats(storeId, period, selectedCategory),
-        api.getStaffDashboardStats(storeId, period)
+        api.getDashboardStats(period, selectedCategory),
+        api.getStaffDashboardStats(period)
       ]);
       setStats(mainStatsData);
       setStaffStats(staffStatsData);
     } catch (error) {
       console.error("Failed to fetch dashboard stats:", error);
     }
-  }, [storeId, period, selectedCategory]);
+  }, [period, selectedCategory]);
 
   const fetchCategories = useCallback(async () => {
     try {
-      const services: Service[] = await api.getServices(storeId);
+      const services: Service[] = await api.getServices();
       const uniqueCategories = [...new Set(services.map(s => s.category).filter(Boolean) as string[])];
       setCategories(uniqueCategories);
     } catch (error) {
       console.error("Failed to fetch categories:", error);
     }
-  }, [storeId]);
+  }, []);
 
   useEffect(() => {
     fetchStats();
@@ -87,7 +91,7 @@ export const DashboardView = ({ storeId }: DashboardViewProps) => {
         </div>
         <div className="flex items-center gap-2">
           <button 
-            onClick={() => setIsRadarModalOpen(true)}
+            onClick={() => setIsOpportunitiesModalOpen(true)}
             className="flex items-center gap-2 bg-zinc-100 text-zinc-900 px-4 py-2 rounded-xl hover:bg-zinc-200 transition-colors border border-zinc-200"
           >
             <Radar size={16} />
@@ -182,97 +186,188 @@ export const DashboardView = ({ storeId }: DashboardViewProps) => {
       </Card>
 
       <AnimatePresence>
-        {isRadarModalOpen && (
-          <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-8 relative"
-            >
-              <button onClick={() => setIsRadarModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600"><X size={24} /></button>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-amber-100 text-amber-600 rounded-lg"><Radar size={20} /></div>
-                <h3 className="text-xl font-bold">Radar de Oportunidades</h3>
-              </div>
-              <p className="text-zinc-500 mb-8">Descubra insights e ideias para impulsionar seu negócio com as Dicas Itrust.</p>
+        {isOpportunitiesModalOpen && (
+          <OpportunitiesModal onClose={() => setIsOpportunitiesModalOpen(false)} />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card onClick={() => { setIsRadarModalOpen(false); setListModalType('inactive'); }} className="p-4 text-center cursor-pointer hover:bg-zinc-50 transition-colors">
-                  <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center mx-auto mb-3"><Users size={24} /></div>
-                  <h5 className="font-bold text-sm">Clientes Inativos</h5>
-                  <p className="text-xs text-zinc-500 mt-1">Reative clientes que não agendam há um tempo.</p>
-                </Card>
-                <Card onClick={() => { setIsRadarModalOpen(false); setListModalType('birthday'); }} className="p-4 text-center cursor-pointer hover:bg-zinc-50 transition-colors">
-                  <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-lg flex items-center justify-center mx-auto mb-3"><Gift size={24} /></div>
-                  <h5 className="font-bold text-sm">Aniversariantes</h5>
-                  <p className="text-xs text-zinc-500 mt-1">Ofereça um mimo para aniversariantes do mês.</p>
-                </Card>
-                <Card onClick={() => setActiveTipModal('combo')} className="p-4 text-center cursor-pointer hover:bg-zinc-50 transition-colors">
-                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center mx-auto mb-3"><PackageIcon size={24} /></div>
-                  <h5 className="font-bold text-sm">Combos de Serviços</h5>
-                  <p className="text-xs text-zinc-500 mt-1">Crie pacotes para aumentar o ticket médio.</p>
-                </Card>
-              </div>
-            </motion.div>
+const OpportunitiesModal = ({ onClose }: { onClose: () => void }) => {
+  const [activeTab, setActiveTab] = useState<'inactive' | 'birthday' | 'combo'>('inactive');
+  const [clients, setClients] = useState<ClientWithStats[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<ClientWithStats | null>(null);
+  const [message, setMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState(false);
+
+  const fetchClients = useCallback(async () => {
+    if (activeTab === 'combo') {
+      setClients([]);
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const data = activeTab === 'inactive'
+        ? await api.getInactiveClients()
+        : await api.getBirthdayClients();
+      setClients(data);
+    } catch (error) {
+      console.error(`Failed to fetch ${activeTab} clients:`, error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    fetchClients();
+  }, [fetchClients]);
+
+  const tabConfig = {
+    inactive: { title: 'Clientes Inativos', icon: UsersIcon, description: 'Clientes que não agendam há mais de 90 dias.' },
+    birthday: { title: 'Aniversariantes', icon: Gift, description: 'Clientes que fazem aniversário este mês.' },
+    combo: { title: 'Dicas de Combos', icon: PackageIcon, description: 'Ideias para aumentar seu ticket médio.' },
+  };
+
+  const handleOpenMessageModal = (client: ClientWithStats) => {
+    setSelectedClient(client);
+    if (activeTab === 'inactive') {
+        setMessage(`Olá ${client.name.split(' ')[0]}, sentimos sua falta aqui no salão! Para celebrar seu retorno, estamos oferecendo um desconto especial no seu próximo agendamento. Que tal?`);
+    } else {
+        setMessage(`Feliz aniversário, ${client.name.split(' ')[0]}! 🎉 Para comemorar seu dia, temos um presente especial para você em nosso salão. Válido durante todo o seu mês!`);
+    }
+    setIsMessageModalOpen(true);
+    setSendSuccess(false);
+  };
+
+  const handleCloseMessageModal = () => {
+      setIsMessageModalOpen(false);
+      setTimeout(() => {
+        setSelectedClient(null);
+        setMessage('');
+        setIsSending(false);
+      }, 300);
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!selectedClient || !message) return;
+      setIsSending(true);
+      try {
+          await api.sendWhatsappMessage({ to: selectedClient.phone, message });
+          setSendSuccess(true);
+          setTimeout(handleCloseMessageModal, 2000);
+      } catch (error: any) {
+          alert(`Falha ao enviar mensagem: ${error.message}`);
+      } finally {
+          setIsSending(false);
+      }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-md">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-zinc-200 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-100 text-amber-600 rounded-lg"><Radar size={20} /></div>
+            <div>
+              <h3 className="text-xl font-bold">Radar de Oportunidades</h3>
+              <p className="text-zinc-500 text-sm">Insights e ações para impulsionar seu negócio.</p>
+            </div>
           </div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {listModalType && (
-            <OpportunityListModal
-                storeId={storeId}
-                type={listModalType}
-                onClose={() => setListModalType(null)}
-            />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {activeTipModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-md">
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              className="bg-zinc-50 rounded-2xl shadow-2xl w-full max-w-lg p-8 relative border border-zinc-200"
-            >
-              <button onClick={() => setActiveTipModal(null)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600"><X size={24} /></button>
-              <div className="flex items-start gap-4">
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-600"><X size={24} /></button>
+        </div>
+        <div className="flex border-b border-zinc-200 px-4">
+          {Object.entries(tabConfig).map(([key, config]) => (
+            <button key={key} onClick={() => setActiveTab(key as any)} className={`flex items-center gap-2 px-4 py-3 font-medium text-sm transition-colors ${activeTab === key ? 'border-b-2 border-black text-black' : 'text-zinc-500 hover:text-zinc-800'}`}>
+              <config.icon size={16} /> {config.title}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {activeTab === 'combo' ? (
+            <div className="p-8">
+              <div className="flex items-start gap-4 bg-zinc-50 p-6 rounded-xl border border-zinc-200">
                 <div className="p-3 bg-amber-100 text-amber-600 rounded-xl"><Lightbulb size={24} /></div>
                 <div>
-                  <h4 className="text-lg font-bold">
-                    {activeTipModal === 'inactive' && 'Ideia: Campanha para Clientes Inativos'}
-                    {activeTipModal === 'birthday' && 'Ideia: Ação para Aniversariantes'}
-                    {activeTipModal === 'combo' && 'Ideia: Promoção de Combos'}
-                  </h4>
-                  <div className="prose prose-sm text-zinc-600 mt-4">
-                    {activeTipModal === 'inactive' && (
-                      <>
-                        <p>Identifique clientes que não agendam há mais de 3 meses. Envie uma mensagem personalizada via WhatsApp oferecendo <strong>15% de desconto</strong> no próximo serviço.</p>
-                        <p><strong>Exemplo de mensagem:</strong> "Olá [Nome do Cliente], sentimos sua falta! Para celebrar seu retorno, estamos oferecendo 15% de desconto no seu próximo agendamento. Que tal?"</p>
-                      </>
-                    )}
-                    {activeTipModal === 'birthday' && (
-                      <>
-                        <p>No início de cada mês, filtre os clientes que fazem aniversário. Envie uma mensagem carinhosa oferecendo um serviço de baixo custo (ex: hidratação, design de sobrancelha) como presente.</p>
-                        <p><strong>Exemplo de mensagem:</strong> "Feliz aniversário, [Nome do Cliente]! 🎉 Para comemorar seu dia, o tBeauty te presenteia com uma hidratação especial. Válido durante todo o seu mês!"</p>
-                      </>
-                    )}
-                    {activeTipModal === 'combo' && (
-                      <>
-                        <p>Crie pacotes de serviços que se complementam. Por exemplo: "Pé + Mão com 10% de desconto" ou "Corte + Hidratação com preço especial".</p>
-                        <p>Divulgue esses combos nas redes sociais e envie para sua lista de clientes no WhatsApp para incentivar agendamentos de maior valor.</p>
-                      </>
-                    )}
+                  <h4 className="text-lg font-bold">Ideia: Promoção de Combos</h4>
+                  <div className="prose prose-sm text-zinc-600 mt-2">
+                    <p>Crie pacotes de serviços que se complementam. Por exemplo: "Pé + Mão com 10% de desconto" ou "Corte + Hidratação com preço especial".</p>
+                    <p>Divulgue esses combos nas redes sociais e envie para sua lista de clientes no WhatsApp para incentivar agendamentos de maior valor.</p>
                   </div>
                 </div>
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+            </div>
+          ) : (
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-zinc-500 uppercase bg-zinc-50 sticky top-0">
+                <tr>
+                  <th scope="col" className="px-6 py-3">Nome</th>
+                  <th scope="col" className="px-6 py-3">Telefone</th>
+                  {activeTab === 'inactive' && <th scope="col" className="px-6 py-3">Último Agendamento</th>}
+                  {activeTab === 'birthday' && <th scope="col" className="px-6 py-3">Aniversário</th>}
+                  <th scope="col" className="px-6 py-3 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  <tr><td colSpan={4} className="text-center p-8 text-zinc-400"><Loader className="animate-spin inline-block mr-2" /> Carregando...</td></tr>
+                ) : clients.length === 0 ? (
+                  <tr><td colSpan={4} className="text-center p-8 text-zinc-400">Nenhum cliente encontrado.</td></tr>
+                ) : (
+                  clients.map(client => (
+                    <tr key={client.id} className="bg-white border-b last:border-0">
+                      <th scope="row" className="px-6 py-4 font-bold text-zinc-900">{client.name}</th>
+                      <td className="px-6 py-4 text-zinc-600">{client.phone}</td>
+                      {activeTab === 'inactive' && <td className="px-6 py-4 text-zinc-600">{client.last_appointment ? new Date(client.last_appointment).toLocaleDateString() : 'N/A'}</td>}
+                      {activeTab === 'birthday' && <td className="px-6 py-4 text-zinc-600">{client.birth_date ? new Date(client.birth_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : 'N/A'}</td>}
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button onClick={() => handleOpenMessageModal(client)} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg" title="Enviar Mensagem"><MessageSquare size={18} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <AnimatePresence>
+          {isMessageModalOpen && selectedClient && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center p-4 bg-black/40">
+                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
+                      {sendSuccess ? (
+                          <div className="text-center">
+                              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle2 size={32} /></div>
+                              <h3 className="text-xl font-bold">Mensagem Enviada!</h3>
+                              <p className="text-zinc-500 mt-2">A mensagem para {selectedClient.name} foi enviada com sucesso.</p>
+                          </div>
+                      ) : (
+                          <>
+                              <h3 className="text-xl font-bold mb-2">Enviar Mensagem</h3>
+                              <p className="text-sm text-zinc-500 mb-6">Para: <strong>{selectedClient.name}</strong> ({selectedClient.phone})</p>
+                              <form onSubmit={handleSendMessage} className="space-y-4">
+                                  <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={6} className="w-full p-4 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" />
+                                  <div className="flex gap-3 pt-4">
+                                      <button type="button" onClick={handleCloseMessageModal} className="flex-1 px-4 py-2 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">Cancelar</button>
+                                      <button type="submit" disabled={isSending} className="flex-1 px-4 py-2 bg-black text-white rounded-xl hover:bg-zinc-800 transition-colors disabled:bg-zinc-400 flex items-center justify-center gap-2">
+                                          {isSending ? <Loader size={16} className="animate-spin" /> : <MessageSquare size={16} />}
+                                          {isSending ? 'Enviando...' : 'Enviar via WhatsApp'}
+                                      </button>
+                                  </div>
+                              </form>
+                          </>
+                      )}
+                  </motion.div>
+              </div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     </div>
   );
 };
