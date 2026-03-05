@@ -187,7 +187,7 @@ export const SettingsView = ({ storeId, storeCode }: SettingsViewProps) => {
               />
             </div>
             <div>
-              <label htmlFor="whatsapp_number" className="block text-sm font-medium text-zinc-700 mb-1">WhatsApp para Pagamento (Pix)</label>
+              <label htmlFor="whatsapp_number" className="block text-sm font-medium text-zinc-700 mb-1">WhatsApp de Contato e Pagamento (Pix)</label>
               <input 
                 id="whatsapp_number"
                 type="text" 
@@ -196,7 +196,7 @@ export const SettingsView = ({ storeId, storeCode }: SettingsViewProps) => {
                 placeholder="(00) 00000-0000"
                 className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none"
               />
-              <p className="text-xs text-zinc-500 mt-1">Este número será usado para gerar o QR Code de pagamento.</p>
+              <p className="text-xs text-zinc-500 mt-1">Este número aparecerá para contato e será usado para gerar o QR Code de pagamento.</p>
             </div>
             <div>
               <label htmlFor="monthly_goal" className="block text-sm font-medium text-zinc-700 mb-1">Meta Mensal de Faturamento (R$)</label>

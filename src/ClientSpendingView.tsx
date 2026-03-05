@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api } from './services/api.ts';
 import { Client, ClientSpendingStats } from './types.ts';
 import { Card } from './UI.tsx';
-import { Wallet, TrendingUp, History, Loader } from 'lucide-react';
+import { Wallet, TrendingUp, History, Loader, Calendar, CheckCircle, Clock } from 'lucide-react';
 
 interface ClientSpendingViewProps {
   client: Client;
@@ -14,6 +14,12 @@ const StatCard = ({ title, value, icon: Icon, color }: { title: string, value: s
         <h3 className="text-2xl font-bold text-zinc-900">{value}</h3>
     </Card>
 );
+
+const formatMonth = (monthStr: string) => {
+    const [year, month] = monthStr.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+    return date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+};
 
 export const ClientSpendingView = ({ client }: ClientSpendingViewProps) => {
   const [spendingStats, setSpendingStats] = useState<ClientSpendingStats | null>(null);
@@ -41,7 +47,7 @@ export const ClientSpendingView = ({ client }: ClientSpendingViewProps) => {
     return <div className="text-center p-12"><Loader className="animate-spin inline-block" /></div>;
   }
 
-  if (!spendingStats) {
+  if (!spendingStats || !spendingStats.monthlyBreakdown) {
     return <Card className="text-center py-12 text-zinc-500">Não foi possível carregar os dados de gastos.</Card>;
   }
 
@@ -72,27 +78,43 @@ export const ClientSpendingView = ({ client }: ClientSpendingViewProps) => {
         />
       </div>
 
-      <Card>
-        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-          <History size={20} className="text-zinc-500" />
-          Últimos Serviços Realizados
-        </h3>
-        {spendingStats.history.length === 0 ? (
-            <p className="text-zinc-500 text-sm">Nenhum serviço concluído encontrado no seu histórico.</p>
-        ) : (
-            <ul className="space-y-3">
-                {spendingStats.history.map((item, index) => (
-                    <li key={index} className="flex justify-between items-center p-3 bg-zinc-50 rounded-lg">
-                        <div>
-                            <p className="font-medium">{item.service_name}</p>
-                            <p className="text-xs text-zinc-400">{new Date(item.start_time).toLocaleDateString('pt-BR')}</p>
-                        </div>
-                        <p className="font-bold text-zinc-700">{formatCurrency(item.service_price)}</p>
-                    </li>
-                ))}
-            </ul>
-        )}
-      </Card>
+      {spendingStats.monthlyBreakdown.length === 0 ? (
+        <Card>
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><History size={20} className="text-zinc-500" /> Histórico de Serviços</h3>
+            <p className="text-zinc-500 text-sm">Nenhum serviço encontrado no seu histórico.</p>
+        </Card>
+      ) : (
+        spendingStats.monthlyBreakdown.map((monthData) => (
+            <Card key={monthData.month}>
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2 capitalize">
+                    <Calendar size={20} className="text-zinc-500" />
+                    {formatMonth(monthData.month)}
+                </h3>
+                <div className="flex justify-end gap-6 mb-4 text-xs text-zinc-500">
+                    <p>Consumado: <span className="font-bold text-zinc-800">{formatCurrency(monthData.completedTotal)}</span></p>
+                    <p>Previsto: <span className="font-bold text-zinc-800">{formatCurrency(monthData.upcomingTotal)}</span></p>
+                </div>
+                <ul className="space-y-3">
+                    {monthData.appointments.map((item, index) => (
+                        <li key={index} className="flex justify-between items-center p-3 bg-zinc-50 rounded-lg">
+                            <div>
+                                <p className="font-medium">{item.service_name}</p>
+                                <p className="text-xs text-zinc-400">{new Date(item.start_time).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <p className="font-bold text-zinc-700">{formatCurrency(item.service_price)}</p>
+                                {item.status === 'COMPLETED' ? (
+                                    <span title="Concluído" className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle size={14} /> Concluído</span>
+                                ) : (
+                                    <span title="Agendado" className="flex items-center gap-1 text-xs text-amber-600"><Clock size={14} /> Agendado</span>
+                                )}
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            </Card>
+        ))
+      )}
     </div>
   );
 };

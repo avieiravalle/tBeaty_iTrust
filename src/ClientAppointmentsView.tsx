@@ -338,8 +338,12 @@ export const ClientAppointmentsView = ({ client, preselectedStoreId, onModalOpen
                 {formData.storeId && !onlineBookingEnabled && storeSettings && (
                   <div className="text-center p-6 bg-amber-50 border border-amber-200 rounded-xl my-4">
                     <h4 className="font-bold text-amber-800">Agendamento por Telefone</h4>
-                    <p className="text-sm text-amber-700 mt-2">
-                        Este salão não aceita agendamentos online no momento. Por favor, entre em contato para marcar seu horário.
+                    <p className="text-sm text-amber-700 mt-2 leading-relaxed">
+                        Este salão não aceita agendamentos online no momento.
+                        {storeSettings.whatsapp_number
+                            ? <> Por favor, entre em contato pelo telefone <strong className="text-amber-800">{storeSettings.whatsapp_number}</strong> para marcar seu horário.</>
+                            : " Por favor, entre em contato para marcar seu horário."
+                        }
                     </p>
                     {storeSettings.whatsapp_number && (
                         <a href={`tel:${storeSettings.whatsapp_number.replace(/\D/g, '')}`} className="mt-4 inline-flex items-center gap-2 font-bold text-black bg-amber-300 px-4 py-2 rounded-lg">

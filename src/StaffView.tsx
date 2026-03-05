@@ -18,7 +18,8 @@ export const StaffView = ({ user }: StaffViewProps) => {
     email: '',
     commission_rate: '30',
     break_start_time: '',
-    break_end_time: ''
+    break_end_time: '',
+    monthly_goal: ''
   });
 
   const fetchStaff = useCallback(async () => {
@@ -42,7 +43,8 @@ export const StaffView = ({ user }: StaffViewProps) => {
         email: staffMember.email,
         commission_rate: staffMember.commission_rate.toString(),
         break_start_time: staffMember.break_start_time || '',
-        break_end_time: staffMember.break_end_time || ''
+        break_end_time: staffMember.break_end_time || '',
+        monthly_goal: staffMember.monthly_goal?.toString() || ''
       });
     } else {
       setFormData({
@@ -50,7 +52,8 @@ export const StaffView = ({ user }: StaffViewProps) => {
         email: '',
         commission_rate: '30',
         break_start_time: '',
-        break_end_time: ''
+        break_end_time: '',
+        monthly_goal: ''
       });
     }
     setIsModalOpen(true);
@@ -66,6 +69,7 @@ export const StaffView = ({ user }: StaffViewProps) => {
     const dataToSave = {
       ...formData,
       commission_rate: parseFloat(formData.commission_rate) || 0,
+      monthly_goal: parseFloat(formData.monthly_goal) || 0,
       store_id: user.store_id,
     };
     try {
@@ -146,6 +150,7 @@ export const StaffView = ({ user }: StaffViewProps) => {
                 <h4 className="font-bold">{staffMember.name}</h4>
                 <p className="text-xs text-zinc-500">{staffMember.email}</p>
                 <p className="text-xs text-zinc-500">Comissão: {staffMember.commission_rate}%</p>
+                <p className="text-xs text-zinc-500">Meta: R$ {(staffMember.monthly_goal || 0).toFixed(2).replace('.', ',')}</p>
               </div>
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${staffMember.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-zinc-200 text-zinc-600'}`}>
                 {staffMember.status === 'ACTIVE' ? 'Ativo' : 'Inativo'}
@@ -170,7 +175,10 @@ export const StaffView = ({ user }: StaffViewProps) => {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div><label className="block text-sm font-medium text-zinc-700 mb-1">Nome</label><input required className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
                 <div><label className="block text-sm font-medium text-zinc-700 mb-1">E-mail</label><input required type="email" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} /></div>
-                <div><label className="block text-sm font-medium text-zinc-700 mb-1">Comissão Padrão (%)</label><input required type="number" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.commission_rate} onChange={e => setFormData({...formData, commission_rate: e.target.value})} /></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="block text-sm font-medium text-zinc-700 mb-1">Comissão Padrão (%)</label><input required type="number" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.commission_rate} onChange={e => setFormData({...formData, commission_rate: e.target.value})} /></div>
+                  <div><label className="block text-sm font-medium text-zinc-700 mb-1">Meta Mensal (R$)</label><input type="number" placeholder="Ex: 5000" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.monthly_goal} onChange={e => setFormData({...formData, monthly_goal: e.target.value})} /></div>
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div><label className="block text-sm font-medium text-zinc-700 mb-1">Início Pausa</label><input type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_start_time} onChange={e => setFormData({...formData, break_start_time: e.target.value})} /></div>
                   <div><label className="block text-sm font-medium text-zinc-700 mb-1">Fim Pausa</label><input type="time" className="w-full px-4 py-2 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-black outline-none" value={formData.break_end_time} onChange={e => setFormData({...formData, break_end_time: e.target.value})} /></div>

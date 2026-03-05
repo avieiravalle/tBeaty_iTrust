@@ -6,9 +6,10 @@ import { Star, Loader } from 'lucide-react';
 
 interface SalonsViewProps {
   client: Client;
+  onViewServices: (storeId: number) => void;
 }
 
-export const SalonsView = ({ client }: SalonsViewProps) => {
+export const SalonsView = ({ client, onViewServices }: SalonsViewProps) => {
   const [stores, setStores] = useState<Store[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -56,7 +57,7 @@ export const SalonsView = ({ client }: SalonsViewProps) => {
                 <h3 className="font-bold text-lg mb-4">{store.name}</h3>
               </div>
               <div className="flex items-center justify-between mt-4">
-                <button className="w-full bg-rose-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-rose-600 transition-colors mr-3">
+                <button onClick={() => onViewServices(store.id)} className="w-full bg-rose-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-rose-600 transition-colors mr-3">
                   Ver Serviços
                 </button>
                 <button onClick={() => handleToggleFavorite(store)} className="p-3 rounded-xl bg-zinc-100 hover:bg-rose-100 transition-colors" title={store.is_favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}>

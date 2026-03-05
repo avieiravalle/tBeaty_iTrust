@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from './services/api.ts';
 import { User, Appointment, CommissionStats } from './types.ts';
-import { Clock, DollarSign, User as ClientIcon, Loader2, FileText, Plus, X, XCircle } from 'lucide-react';
+import { Clock, DollarSign, User as ClientIcon, Loader2, FileText, Plus, X, XCircle, Edit, Save } from 'lucide-react';
 
 // Componente Card local para evitar dependência de arquivos ausentes no contexto
 const Card = ({ className, children }: { className?: string, children: React.ReactNode }) => (
@@ -45,6 +45,10 @@ export const CollaboratorDashboardView = ({ user, onViewAppointments }: Collabor
   const [isLoading, setIsLoading] = useState(true);
   const [isAddingExpense, setIsAddingExpense] = useState(false);
   const [newExpense, setNewExpense] = useState({ description: '', amount: '' });
+  
+  // New states for editing goal
+  const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [editingGoalValue, setEditingGoalValue] = useState('');
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -96,6 +100,24 @@ export const CollaboratorDashboardView = ({ user, onViewAppointments }: Collabor
     }
   }, [user.id, fetchData]);
 
+  const handleSaveGoal = useCallback(async () => {
+    if (!user) return;
+    const newGoal = parseFloat(editingGoalValue);
+    if (isNaN(newGoal) || newGoal < 0) {
+      alert("Por favor, insira um valor de meta válido.");
+      return;
+    }
+    try {
+      await api.updateStaff(user.id, { monthly_goal: newGoal });
+      setIsEditingGoal(false);
+      // Refresh data to show the new goal
+      await fetchData(); 
+    } catch (error: any) {
+      console.error("Failed to update goal:", error);
+      alert(`Erro ao atualizar a meta: ${error.message}`);
+    }
+  }, [editingGoalValue, user, fetchData]);
+
   const { todayAppointments, tomorrowAppointments } = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -118,7 +140,7 @@ export const CollaboratorDashboardView = ({ user, onViewAppointments }: Collabor
 
   const goalProgress = useMemo(() => {
       if (!commissionStats || !commissionStats.monthly_goal || commissionStats.monthly_goal === 0 || !commissionStats.monthly_revenue) return 0;
-      // A meta é da loja, o progresso é a contribuição do colaborador para a meta geral.
+      // A meta é pessoal do colaborador, e o progresso é o faturamento dele em relação a essa meta.
       return (commissionStats.monthly_revenue / commissionStats.monthly_goal) * 100;
   }, [commissionStats]);
 
@@ -150,16 +172,41 @@ export const CollaboratorDashboardView = ({ user, onViewAppointments }: Collabor
                             <Stat label="Comissão (Líquido)" value={formatCurrency(commissionStats.monthly)} />
                         </div>
                         
-                        {commissionStats.monthly_goal && commissionStats.monthly_goal > 0 && (
+                        {isEditingGoal ? (
+                            <div className="mt-2">
+                                <label className="block text-sm font-medium text-zinc-700 mb-1">Definir sua meta mensal (R$)</label>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="Ex: 5000"
+                                        className="w-full px-3 py-1.5 border border-zinc-200 rounded-lg focus:ring-2 focus:ring-black outline-none"
+                                        value={editingGoalValue}
+                                        onChange={e => setEditingGoalValue(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleSaveGoal()}
+                                        autoFocus
+                                    />
+                                    <button onClick={handleSaveGoal} className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600" title="Salvar"><Save size={16} /></button>
+                                    <button onClick={() => setIsEditingGoal(false)} className="p-2 bg-zinc-200 text-zinc-700 rounded-lg hover:bg-zinc-300" title="Cancelar"><X size={16} /></button>
+                                </div>
+                            </div>
+                        ) : (
                             <div>
                                 <div className="flex justify-between items-baseline mb-1">
-                                    <p className="text-sm text-zinc-500">Meta da Loja</p>
+                                    <div className="flex items-center gap-2">
+                                        <p className="text-sm text-zinc-500">Sua Meta Mensal</p>
+                                        <button onClick={() => { setIsEditingGoal(true); setEditingGoalValue(commissionStats.monthly_goal?.toString() || ''); }} className="text-zinc-400 hover:text-black" title="Editar meta"><Edit size={12} /></button>
+                                    </div>
                                     <p className="text-xs font-bold">{formatCurrency(commissionStats.monthly_goal)}</p>
                                 </div>
-                                <div className="w-full bg-zinc-200 rounded-full h-2.5">
-                                    <div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${Math.min(goalProgress, 100)}%` }}></div>
-                                </div>
-                                <p className="text-xs text-zinc-400 mt-1 text-right">Sua contribuição: {goalProgress.toFixed(1)}%</p>
+                                {commissionStats.monthly_goal > 0 ? (
+                                    <>
+                                        <div className="w-full bg-zinc-200 rounded-full h-2.5"><div className="bg-emerald-500 h-2.5 rounded-full" style={{ width: `${Math.min(goalProgress, 100)}%` }}></div></div>
+                                        <p className="text-xs text-zinc-400 mt-1 text-right">{goalProgress.toFixed(1)}% da meta atingida</p>
+                                    </>
+                                ) : (
+                                    <div className="text-center p-3 bg-zinc-50 rounded-lg"><p className="text-xs text-zinc-500">Você ainda não definiu uma meta. Clique no lápis para adicionar uma!</p></div>
+                                )}
                             </div>
                         )}
                     </div>

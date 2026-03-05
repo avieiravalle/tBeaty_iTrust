@@ -3,46 +3,12 @@ import { api } from './services/api.ts';
 import { Client, Store } from './types.ts';
 import { Building, Calendar, Wallet, LogOut, Star } from 'lucide-react';
 import { ClientAppointmentsView } from './ClientAppointmentsView.tsx';
+import { ClientSpendingView } from './ClientSpendingView.tsx';
+import { SalonsView } from './SalonsView.tsx';
 
 interface ClientAppViewProps {
   client: Client;
   onLogout: () => void;
-}
-
-const NearbySalonsView = ({ client, onViewServices }: { client: Client, onViewServices: (storeId: number) => void }) => {
-  const [stores, setStores] = useState<Store[]>([]);
-
-  useEffect(() => {
-    // Pass client.id to get favorite status
-    if (client) {
-      api.getStores(client.id).then(setStores).catch(err => console.error("Failed to fetch stores", err));
-    }
-  }, [client]);
-
-  return (
-    <div>
-      <h2 className="text-2xl font-bold mb-6">Salões Próximos</h2>
-      {stores.length === 0 ? (
-        <p className="text-zinc-500">Nenhum salão encontrado.</p>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {stores.map(store => (
-            <div key={store.id} className="bg-white p-6 rounded-2xl border border-zinc-100 shadow-sm hover:shadow-lg transition-shadow flex flex-col">
-              <div className="flex-grow">
-                <div className="flex justify-between items-start mb-4">
-                  <h3 className="font-bold text-lg">{store.name}</h3>
-                  {store.is_favorite === 1 && <Star size={18} className="text-rose-400 fill-current" />}
-                </div>
-              </div>
-              <button onClick={() => onViewServices(store.id)} className="w-full mt-2 bg-rose-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-rose-600 transition-colors">
-                Ver Serviços
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 export const ClientAppView = ({ client, onLogout }: ClientAppViewProps) => {
@@ -57,14 +23,14 @@ export const ClientAppView = ({ client, onLogout }: ClientAppViewProps) => {
   const renderContent = () => {
     switch (activeView) {
       case 'salons':
-        return <NearbySalonsView client={client} onViewServices={handleViewServices} />;
+        return <SalonsView client={client} onViewServices={handleViewServices} />;
       case 'appointments':
         return <ClientAppointmentsView 
                   client={client} 
                   preselectedStoreId={preselectedStoreId} 
                   onModalOpened={() => setPreselectedStoreId(null)} />;
       case 'spending':
-        return <div className="text-center p-12 text-zinc-400">Meus Gastos (Em breve)</div>;
+        return <ClientSpendingView client={client} />;
       default:
         return <ClientAppointmentsView client={client} />;
     }

@@ -61,8 +61,7 @@ export const HelpView = () => {
         <p>Gerencie sua equipe de colaboradores.</p>
         <ul>
           <li><strong>Adicionar:</strong> Cadastre novos profissionais informando nome, e-mail e comissão padrão. Uma senha segura é gerada automaticamente.</li>
-          <li><strong>Editar:</strong> Altere dados como nome, e-mail, comissão padrão e defina um <strong>horário de pausa</strong> (almoço).</li>
-          <li><strong>Comissões por Serviço:</strong> Clique no ícone de cifrão ($) para definir comissões específicas para cada serviço, que sobrescrevem a comissão padrão do profissional.</li>
+          <li><strong>Editar:</strong> Altere dados como nome, e-mail, comissão padrãora definir comissões específicas para cada serviço, que sobrescrevem a comissão padrão do profissional.</li>
         </ul>
       </Section>
 
@@ -96,7 +95,7 @@ export const HelpView = () => {
           <li><strong>Informações Gerais:</strong>
             <ul>
               <li>Defina o nome do salão.</li>
-              <li>Informe o número de WhatsApp que será usado como chave Pix.</li>
+              <li>Informe o número de <strong>WhatsApp para Contato</strong>, que também será usado como chave Pix.</li>
               <li>Defina o <strong>Percentual de Sinal</strong> a ser cobrado nos agendamentos online (ex: 10%). Use 0 para desativar a cobrança de sinal.</li>
               <li>Estabeleça a <strong>Meta Mensal de Faturamento</strong> para o dashboard.</li>
               <li>Configure o <strong>Horário de Abertura e Fechamento</strong> do salão.</li>
@@ -105,6 +104,15 @@ export const HelpView = () => {
           </li>
           <li><strong>Código da Loja:</strong> Visualize o código para compartilhar com novos colaboradores.</li>
           <li><strong>Integração WhatsApp:</strong> Ative o envio de mensagens automáticas escaneando o QR Code com seu celular.</li>
+        </ul>
+      </Section>
+
+      <Section title="Segurança e Backups" icon={KeyRound}>
+        <p>A segurança dos seus dados é nossa prioridade.</p>
+        <ul>
+          <li><strong>Backups Automáticos:</strong> O sistema realiza um backup automático e seguro do banco de dados todos os dias às 23:58. Isso garante que, em caso de qualquer imprevisto, seus dados possam ser recuperados.</li>
+          <li><strong>Prevenção de Corrupção:</strong> O processo de backup é feito "online", o que significa que ele pode ser executado sem interromper o uso do sistema e sem risco de corromper o arquivo de backup.</li>
+          <li><strong>Retenção:</strong> Mantemos os backups dos últimos 30 dias para garantir uma janela segura de recuperação.</li>
         </ul>
       </Section>
 
@@ -118,7 +126,7 @@ export const HelpView = () => {
             </ul>
           </li>
           <li><strong>Salões:</strong> Uma vitrine com todos os salões da rede, onde o cliente pode favoritar seus preferidos para fácil acesso. Os salões favoritados aparecem primeiro na lista.</li>
-          <li><strong>Meus Gastos:</strong> Uma visão financeira pessoal, mostrando o total já gasto em serviços e o valor previsto para agendamentos futuros.</li>
+          <li><strong>Meus Gastos:</strong> Um extrato financeiro pessoal, com um detalhamento mês a mês dos serviços consumados e agendamentos futuros, permitindo um controle claro dos seus gastos.</li>
         </ul>
       </Section>
     </div>

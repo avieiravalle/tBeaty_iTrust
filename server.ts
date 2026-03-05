@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import { scryptSync, randomBytes, timingSafeEqual } from "crypto";
 import multer from "multer";
 import pkg from 'whatsapp-web.js';
+import cron from 'node-cron';
 const { Client, LocalAuth } = pkg;
 import QRCode from 'qrcode';
 import { fileURLToPath } from 'url';
@@ -121,7 +122,7 @@ function verifyPassword(storedHash: string, suppliedPassword: string): boolean {
 const db = new Database("salon.db");
 
 // --- Database Schema Migration ---
-const LATEST_SCHEMA_VERSION = 14; // Increment this number with each schema change
+const LATEST_SCHEMA_VERSION = 15; // Increment this number with each schema change
 
 const currentVersion = db.pragma('user_version', { simple: true }) as number;
 
@@ -168,6 +169,7 @@ db.exec(`
     break_start_time TEXT,
     break_end_time TEXT,
     status TEXT NOT NULL DEFAULT 'ACTIVE',
+    monthly_goal REAL DEFAULT 0,
     FOREIGN KEY (store_id) REFERENCES stores(id)
   );
 
@@ -329,6 +331,47 @@ if (storeCount.count === 0) {
 async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || "3002", 10);
+
+  // --- Daily Database Backup ---
+  // É recomendado adicionar 'db_backups/' ao seu arquivo .gitignore
+  const BACKUPS_DIR = path.join(__dirname, 'db_backups');
+  const BACKUP_RETENTION_DAYS = 30; // Manter backups por 30 dias
+  if (!fs.existsSync(BACKUPS_DIR)) {
+    fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  }
+
+  cron.schedule('58 23 * * *', async () => {
+    console.log(`[${new Date().toLocaleString('pt-BR')}] Executando backup diário do banco de dados...`);
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupFileName = `backup-${timestamp}.db`;
+    const backupFilePath = path.join(BACKUPS_DIR, backupFileName);
+
+    try {
+      // Realiza um backup online seguro, prevenindo corrupção do arquivo de backup.
+      await db.backup(backupFilePath);
+      console.log(`Backup do banco de dados concluído com sucesso: ${backupFileName}`);
+
+      // --- Limpeza de backups antigos ---
+      const files = fs.readdirSync(BACKUPS_DIR)
+        .filter(file => file.startsWith('backup-') && file.endsWith('.db'))
+        .sort((a, b) => fs.statSync(path.join(BACKUPS_DIR, a)).mtime.getTime() - fs.statSync(path.join(BACKUPS_DIR, b)).mtime.getTime()); // Mais antigo primeiro
+
+      if (files.length > BACKUP_RETENTION_DAYS) {
+        const filesToDelete = files.slice(0, files.length - BACKUP_RETENTION_DAYS);
+        for (const file of filesToDelete) {
+          fs.unlinkSync(path.join(BACKUPS_DIR, file));
+          console.log(`Backup antigo removido: ${file}`);
+        }
+      }
+
+    } catch (err) {
+      console.error('Falha no backup do banco de dados:', err);
+    }
+  }, {
+    scheduled: true,
+    timezone: "America/Sao_Paulo"
+  });
   
   app.use(express.json());
   // Servir arquivos enviados estaticamente
@@ -559,11 +602,12 @@ async function startServer() {
                 CASE WHEN f.store_id IS NOT NULL THEN 1 ELSE 0 END as is_favorite
             FROM stores s
             LEFT JOIN client_favorite_stores f ON s.id = f.store_id AND f.client_id = ?
+            WHERE s.code != 'ADMIN00'
             ORDER BY is_favorite DESC, s.name ASC
         `).all(clientId);
         res.json(stores);
     } else {
-        const stores = db.prepare("SELECT id, name, code FROM stores").all();
+        const stores = db.prepare("SELECT id, name, code FROM stores WHERE code != 'ADMIN00'").all();
         res.json(stores);
     }
   });
@@ -799,7 +843,7 @@ async function startServer() {
 
   app.patch("/api/staff/:id", (req, res) => {
     const { id } = req.params;
-    const { name, email, commission_rate, break_start_time, break_end_time } = req.body;
+    const { name, email, commission_rate, break_start_time, break_end_time, monthly_goal } = req.body;
 
     const fields: string[] = [];
     const params: (string | number | null)[] = [];
@@ -810,6 +854,7 @@ async function startServer() {
     // Allow setting breaks to null/empty
     if (break_start_time !== undefined) { fields.push("break_start_time = ?"); params.push(break_start_time || null); }
     if (break_end_time !== undefined) { fields.push("break_end_time = ?"); params.push(break_end_time || null); }
+    if (monthly_goal !== undefined) { fields.push("monthly_goal = ?"); params.push(monthly_goal); }
 
     if (fields.length === 0) {
       return res.status(400).json({ error: "Nenhum campo para atualizar foi fornecido." });
@@ -1375,33 +1420,51 @@ async function startServer() {
     const { clientId } = req.params;
 
     try {
-      const historicalTotal = db.prepare(`
-        SELECT SUM(s.price) as total
+      const appointments = db.prepare(`
+        SELECT s.name as service_name, s.price as service_price, a.start_time, a.status
         FROM appointments a
         JOIN services s ON a.service_id = s.id
-        WHERE a.client_id = ? AND a.status = 'COMPLETED'
-      `).get(clientId) as { total: number };
-
-      const upcomingTotal = db.prepare(`
-        SELECT SUM(s.price) as total
-        FROM appointments a
-        JOIN services s ON a.service_id = s.id
-        WHERE a.client_id = ? AND a.status = 'PENDING' AND a.start_time > CURRENT_TIMESTAMP
-      `).get(clientId) as { total: number };
-
-      const history = db.prepare(`
-        SELECT s.name as service_name, s.price as service_price, a.start_time
-        FROM appointments a
-        JOIN services s ON a.service_id = s.id
-        WHERE a.client_id = ? AND a.status = 'COMPLETED'
+        WHERE a.client_id = ? AND a.status IN ('COMPLETED', 'PENDING')
         ORDER BY a.start_time DESC
-        LIMIT 10
-      `).all(clientId);
+      `).all(clientId) as { service_name: string, service_price: number, start_time: string, status: 'COMPLETED' | 'PENDING' }[];
+
+      const monthlyData = new Map<string, { completedTotal: number; upcomingTotal: number; appointments: any[] }>();
+      let overallHistoricalTotal = 0;
+      let overallUpcomingTotal = 0;
+
+      for (const appt of appointments) {
+        const monthKey = appt.start_time.substring(0, 7); // "YYYY-MM"
+        if (!monthlyData.has(monthKey)) {
+          monthlyData.set(monthKey, { completedTotal: 0, upcomingTotal: 0, appointments: [] });
+        }
+
+        const monthEntry = monthlyData.get(monthKey)!;
+
+        monthEntry.appointments.push({
+          service_name: appt.service_name,
+          service_price: appt.service_price,
+          start_time: appt.start_time,
+          status: appt.status,
+        });
+
+        if (appt.status === 'COMPLETED') {
+          monthEntry.completedTotal += appt.service_price;
+          overallHistoricalTotal += appt.service_price;
+        } else if (appt.status === 'PENDING' && new Date(appt.start_time) > new Date()) {
+          monthEntry.upcomingTotal += appt.service_price;
+          overallUpcomingTotal += appt.service_price;
+        }
+      }
+
+      const monthlyBreakdown = Array.from(monthlyData.entries()).map(([month, data]) => ({
+        month,
+        ...data
+      }));
 
       res.json({
-        historicalTotal: historicalTotal.total || 0,
-        upcomingTotal: upcomingTotal.total || 0,
-        history: history,
+        historicalTotal: overallHistoricalTotal,
+        upcomingTotal: overallUpcomingTotal,
+        monthlyBreakdown: monthlyBreakdown,
       });
     } catch (error) {
       console.error("Error fetching client spending:", error);
@@ -1443,7 +1506,7 @@ async function startServer() {
 
   app.get("/api/commissions/:userId", (req, res) => {
     const { userId } = req.params;
-    const user = db.prepare("SELECT commission_rate, store_id FROM users WHERE id = ?").get(userId) as { commission_rate: number, store_id: number };
+    const user = db.prepare("SELECT commission_rate, store_id, monthly_goal FROM users WHERE id = ?").get(userId) as { commission_rate: number, store_id: number, monthly_goal: number };
     
     if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -1481,7 +1544,6 @@ async function startServer() {
         return result.total || 0;
     };
 
-    const monthlyGoalSetting = db.prepare("SELECT value FROM settings WHERE key = 'monthly_goal' AND store_id = ?").get(user.store_id) as { value: string };
     const recentExpenses = db.prepare("SELECT * FROM expenses WHERE user_id = ? AND date >= ? ORDER BY date DESC").all(userId, startOfMonth);
 
     res.json({
@@ -1489,7 +1551,7 @@ async function startServer() {
       weekly: calculateCommission(startOfWeekStr),
       monthly: calculateCommission(startOfMonth),
       monthly_revenue: calculateRevenue(startOfMonth),
-      monthly_goal: parseFloat(monthlyGoalSetting?.value) || 0,
+      monthly_goal: user.monthly_goal || 0,
       recent_expenses: recentExpenses,
       rate: user.commission_rate
     });
@@ -1664,6 +1726,7 @@ async function startServer() {
               u.email as manager_email 
           FROM stores s 
           LEFT JOIN users u ON s.id = u.store_id AND u.role = 'MANAGER'
+          WHERE s.code != 'ADMIN00'
           ORDER BY 
               CASE s.status
                   WHEN 'PENDING_PAYMENT' THEN 1

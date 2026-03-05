@@ -122,12 +122,20 @@ export interface Notification {
   created_at: string;
 }
 
-export interface ClientSpendingStats {
-  historicalTotal: number;
+export interface MonthlySpending {
+  month: string; // "YYYY-MM"
+  completedTotal: number;
   upcomingTotal: number;
-  history: {
+  appointments: {
     service_name: string;
     service_price: number;
     start_time: string;
+    status: 'PENDING' | 'COMPLETED';
   }[];
+}
+
+export interface ClientSpendingStats {
+  historicalTotal: number;
+  upcomingTotal: number;
+  monthlyBreakdown: MonthlySpending[];
 }
